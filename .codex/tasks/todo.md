@@ -1,5 +1,7 @@
 # TODO
 
+- [x] current-mode 起動拒否時に fake PID と成功ログを残さないようにする
+- [x] 起動スクリプトの検証結果を追記する
 - [x] `start_bot current` が非 `main` ブランチを hard reset しないようにする
 - [x] 起動スクリプトの検証結果を追記する
 - [x] current mode 起動前に last-known-good revision を復元する
@@ -52,6 +54,7 @@
 
 - `supervisor.sh` の `start_bot(mode=current)` で、起動前に `current_local_rev() == LAST_SEEN` を再確認し、さらに `git reset --hard "$LAST_SEEN"` で last-known-good tree を復元してから `bot.py` を起動するようにした
 - `supervisor.sh` の `start_bot(mode=current)` で current branch も確認し、`main` 以外では `git reset --hard "$LAST_SEEN"` を拒否して `supervisor.log` に記録するようにした
+- `supervisor.sh` の current-mode 起動前チェックを background subshell の外へ移し、拒否時は PID ファイル更新と `started bot` ログ出力に進まないようにした
 - `supervisor.sh` の `LAST_SEEN` を初回起動時の local revision で固定初期化し、失敗後に変質した checkout で上書きしないようにした
 - deploy failure 後の current fallback 判定を `current_local_rev() == LAST_SEEN` に統一し、last-known-good revision と一致する checkout だけ再起動するようにした
 - `NEW_REMOTE == LAST_SEEN` の通常再起動分岐でも current checkout が last-known-good と一致しない場合は自動再起動を拒否し、`supervisor.log` へ記録するようにした
@@ -92,6 +95,7 @@
 
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
 - 実施: `start_bot(mode=current)` が `current_local_rev() == LAST_SEEN` に加えて `current_branch == main` の場合だけ `git reset --hard "$LAST_SEEN"` を行い、非 `main` では自動再起動を拒否することをコード上で確認
+- 実施: current-mode の拒否条件が background 起動前に評価され、拒否時は `echo $! > "$PID_FILE"` と `started bot` ログ出力に進まないことをコード上で確認
 - 実施: `start_bot(mode=current)` が `LAST_SEEN` 一致確認と `git reset --hard "$LAST_SEEN"` を行ってから `bot.py` を起動する構造になっていることをコード上で確認
 - 実施: `LAST_SEEN` が初回 local revision のまま保持され、deploy failure 分岐・通常再起動分岐の両方で `current_local_rev() == LAST_SEEN` を条件にしていることをコード上で確認
 - 実施: 初回起動・更新ループの両方で、deploy failure 後の current fallback が `HEAD` 未変更時にだけ許可されることをコード上で確認

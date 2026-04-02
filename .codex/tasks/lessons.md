@@ -18,3 +18,4 @@
 - さらにその判定基準は毎回の直前 `HEAD` ではなく、最後に正常起動した known-good revision に固定する。失敗で変わった checkout を次回基準に昇格させない
 - current-checkout 起動でも dirty worktree をそのまま実行しない。`LAST_SEEN` と一致確認したうえで `git reset --hard "$LAST_SEEN"` により known-good tree を復元してから起動する
 - ただしその hard reset も `main` ブランチに限定する。`HEAD` が known-good revision と一致していても、非 `main` ブランチでは tracked 変更を破壊しうるため current-mode の自動復旧を拒否する
+- current-mode の起動拒否条件は background 化の前に判定する。subshell 内で拒否すると supervisor が fake PID と成功ログを残しやすい
