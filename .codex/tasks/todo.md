@@ -1,5 +1,8 @@
 # TODO
 
+- [x] dirty な非 `main` ブランチでは `reset --hard origin/main` に進まないようにする
+- [x] `main` ブランチ上では引き続き自己回復できることを確認する
+- [x] 起動スクリプトの検証結果を追記する
 - [x] tracked 変更で `git checkout` が失敗しても `reset --hard` まで進むようにする
 - [x] 起動スクリプトの検証結果を追記する
 - [x] `runbot.sh` が自己更新失敗時に即終了するようにする
@@ -31,6 +34,9 @@
 
 ## Changes
 
+- `runbot.sh` で更新前のブランチ名を保持し、`git checkout main` が失敗した場合は現在ブランチが `main` のときだけ `reset --hard origin/main` へ進み、非 `main` なら停止するようにした
+- `supervisor.sh` の `deploy_main()` でも更新前ブランチを確認し、`checkout main` 失敗時は `main` 上のみ reset 続行、非 `main` なら deploy failure として bot を止めないようにした
+- `supervisor.sh` は非 `main` ブランチ上での checkout failure を `supervisor.log` へ明示的に記録するようにした
 - `runbot.sh` の `git checkout main` を `|| :` 付きにし、tracked 変更で checkout が失敗しても `git reset --hard origin/main` による自己回復を継続するようにした
 - `supervisor.sh` の `deploy_main()` でも `git checkout "$BRANCH"` を `|| :` に戻し、tracked 変更で checkout が失敗しても reset により deploy を続行できるようにした
 - `runbot.sh` に `set -eu` を追加し、自己更新の `git` コマンドが失敗したら stale な bot を起動せず即終了するようにした
@@ -56,7 +62,8 @@
 ## Verification
 
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
-- 実施: `git checkout ... || :` のあとに `git reset --hard ...` が続く形になっており、tracked 変更で checkout が失敗しても reset まで進むことをコード上で確認
+- 実施: 一時 repo で `main` 上の dirty 状態からは reset により回復できることを確認 (`main_case:reset_ok`)
+- 実施: `runbot.sh` / `supervisor.sh` ともに、checkout failure 時は事前のブランチ名が `main` のときだけ reset を許可し、非 `main` では abort/failure へ分岐することをコード上で確認
 - 実施: `runbot.sh` が `set -eu` で始まり、更新失敗時に python 実行へ進まないことをコード上で確認
 - 実施: `deploy_main()` の成否が最終の `git reset --hard "$REMOTE_REF"` に依存し、checkout 失敗だけでは deploy を止めないことをコード上で確認
 - 実施: `stat -c '%A %n' supervisor.sh` -> `-rwxr-xr-x supervisor.sh`

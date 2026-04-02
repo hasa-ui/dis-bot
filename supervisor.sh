@@ -36,7 +36,13 @@ stop_bot() {
 }
 
 deploy_main() {
-  git checkout "$BRANCH" >> "$LOG_DIR/supervisor.log" 2>&1 || :
+  current_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo detached)"
+  if ! git checkout "$BRANCH" >> "$LOG_DIR/supervisor.log" 2>&1; then
+    if [ "$current_branch" != "$BRANCH" ]; then
+      echo "[supervisor] refusing deploy: checkout $BRANCH failed while current branch is $current_branch" >> "$LOG_DIR/supervisor.log"
+      return 1
+    fi
+  fi
   git reset --hard "$REMOTE_REF" >> "$LOG_DIR/supervisor.log" 2>&1
 }
 
