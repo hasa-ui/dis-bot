@@ -67,10 +67,11 @@ current_local_rev() {
 # 初回起動
 INITIAL_START_MODE="update"
 INITIAL_LOCAL_REV="$(current_local_rev 2>/dev/null || echo none)"
+LAST_SEEN="$INITIAL_LOCAL_REV"
 git fetch origin >> "$LOG_DIR/supervisor.log" 2>&1 || true
-if [ "$INITIAL_LOCAL_REV" != "$(current_remote_rev 2>/dev/null || echo none)" ]; then
+if [ "$LAST_SEEN" != "$(current_remote_rev 2>/dev/null || echo none)" ]; then
   if ! deploy_main; then
-    if [ "$(current_local_rev 2>/dev/null || echo none)" = "$INITIAL_LOCAL_REV" ]; then
+    if [ "$(current_local_rev 2>/dev/null || echo none)" = "$LAST_SEEN" ]; then
       echo "[supervisor] initial deploy failed; continuing with current checkout" >> "$LOG_DIR/supervisor.log"
       INITIAL_START_MODE="current"
     else
@@ -83,8 +84,6 @@ if [ "$INITIAL_START_MODE" != "none" ]; then
   start_bot "$INITIAL_START_MODE"
 fi
 
-LAST_SEEN="$(current_local_rev 2>/dev/null || echo none)"
-
 while true; do
   sleep "$CHECK_INTERVAL"
 
@@ -93,21 +92,24 @@ while true; do
 
   if [ "$NEW_REMOTE" != "$LAST_SEEN" ]; then
     echo "[supervisor] detected update: $LAST_SEEN -> $NEW_REMOTE" >> "$LOG_DIR/supervisor.log"
-    PRE_DEPLOY_REV="$(current_local_rev 2>/dev/null || echo none)"
     if deploy_main; then
       stop_bot
       start_bot
       LAST_SEEN="$NEW_REMOTE"
     else
       echo "[supervisor] deploy failed; keeping current bot running" >> "$LOG_DIR/supervisor.log"
-      if [ "$(current_local_rev 2>/dev/null || echo none)" = "$PRE_DEPLOY_REV" ]; then
+      if [ "$(current_local_rev 2>/dev/null || echo none)" = "$LAST_SEEN" ]; then
         start_bot current
       else
-        echo "[supervisor] deploy failure changed checkout; refusing current-checkout restart" >> "$LOG_DIR/supervisor.log"
+        echo "[supervisor] deploy failure left checkout away from last known-good revision; refusing current-checkout restart" >> "$LOG_DIR/supervisor.log"
       fi
     fi
   else
     # Bot が落ちていたら再起動
-    start_bot
+    if [ "$(current_local_rev 2>/dev/null || echo none)" = "$LAST_SEEN" ]; then
+      start_bot current
+    else
+      echo "[supervisor] checkout differs from last known-good revision; refusing automatic restart" >> "$LOG_DIR/supervisor.log"
+    fi
   fi
 done
