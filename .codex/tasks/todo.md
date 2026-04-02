@@ -1,5 +1,8 @@
 # TODO
 
+- [x] `/setup` の follow-up 操作でも権限再確認する
+- [x] `/setup` のロール保存前に選択ロールを再解決する
+- [x] 構文検証を実施し、結果を追記する
 - [x] `/setup` コマンドと対話 UI を追加する
 - [x] `/setup` からロール設定と期間設定を保存できるようにする
 - [x] 既存の設定案内文を `/setup` 優先に更新する
@@ -19,6 +22,9 @@
 
 ## Changes
 
+- `OwnerOnlyView.interaction_check()` で setup 実行者の一致に加えて `Manage Server` 権限も毎回再確認するようにした
+- `DurationSetupModal.on_submit()` でも保存前に `Manage Server` 権限を再確認するようにした
+- `RoleSetupView.save_roles()` で保存直前に選択ロールを `guild.get_role(id)` で再解決し、削除済みロールは保存せず選び直しを促すようにした
 - `bot.py` に `/setup` を追加し、現在設定表示と `ロール設定` / `期間設定` / `再表示` ボタンを持つ `SetupHomeView` を実装した
 - `bot.py` に `RoleSetupView` と `DurationSetupModal` を追加し、RoleSelect 3 個と日数入力モーダルから設定保存できるようにした
 - `bot.py` にロール設定・期間設定の共通保存 helper と setup 表示用 helper を追加し、既存 `/config_roles` と `/config_durations` でも再利用するようにした
@@ -34,6 +40,7 @@
 ## Verification
 
 - 実施: `python -m py_compile bot.py` -> 成功
+- 実施: setup View/Modal の権限判定とロール再解決が保存前に走ることをコード上で確認
 - 実施: `DISCORD_TOKEN=dummy DB_PATH=/tmp/dis-bot-setup-test.db python - <<'PY' ... PY` -> `SetupHomeView` / `RoleSetupView` / `DurationSetupModal` の生成成功
 - 実施: `/config_roles` の処理順を確認し、`defer -> 保存 -> 再適用 -> followup` になっていることをコード上で確認
 - 実施: 旧設定ロール ID を `refresh_guild_violation_roles(..., remove_role_ids=previous_role_ids)` 経由で再適用時に除去することをコード上で確認

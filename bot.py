@@ -668,14 +668,21 @@ class OwnerOnlyView(discord.ui.View):
         self.owner_id = owner_id
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.owner_id:
-            return True
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "この setup 画面はコマンド実行者のみ操作できます。",
+                ephemeral=True,
+            )
+            return False
 
-        await interaction.response.send_message(
-            "この setup 画面はコマンド実行者のみ操作できます。",
-            ephemeral=True,
-        )
-        return False
+        if not has_manage_guild(interaction):
+            await interaction.response.send_message(
+                "Manage Server 権限か管理者権限が必要です。",
+                ephemeral=True,
+            )
+            return False
+
+        return True
 
 
 class SetupHomeView(OwnerOnlyView):
@@ -817,6 +824,30 @@ class RoleSetupView(OwnerOnlyView):
             await interaction.response.send_message("ロール選択が不完全です。もう一度選択してください。", ephemeral=True)
             return
 
+        resolved_roles = {
+            "light": guild.get_role(light_role.id),
+            "medium": guild.get_role(medium_role.id),
+            "heavy": guild.get_role(heavy_role.id),
+        }
+        missing_roles = [
+            LEVEL_NAMES[level]
+            for level, role in resolved_roles.items()
+            if role is None
+        ]
+        if missing_roles:
+            await interaction.response.send_message(
+                f"{', '.join(missing_roles)}ロールが見つかりません。選び直してください。",
+                ephemeral=True,
+            )
+            return
+
+        light_role = resolved_roles["light"]
+        medium_role = resolved_roles["medium"]
+        heavy_role = resolved_roles["heavy"]
+        if light_role is None or medium_role is None or heavy_role is None:
+            await interaction.response.send_message("ロール解決に失敗しました。選び直してください。", ephemeral=True)
+            return
+
         await interaction.response.defer()
         refreshed, failed = await save_guild_role_settings(
             guild.id,
@@ -884,6 +915,13 @@ class DurationSetupModal(discord.ui.Modal, title="違反期間設定"):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message(
                 "この setup 画面はコマンド実行者のみ操作できます。",
+                ephemeral=True,
+            )
+            return
+
+        if not has_manage_guild(interaction):
+            await interaction.response.send_message(
+                "Manage Server 権限か管理者権限が必要です。",
                 ephemeral=True,
             )
             return
