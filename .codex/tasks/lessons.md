@@ -20,3 +20,4 @@
 - ただしその hard reset も `main` ブランチに限定する。`HEAD` が known-good revision と一致していても、非 `main` ブランチでは tracked 変更を破壊しうるため current-mode の自動復旧を拒否する
 - current-mode の起動拒否条件は background 化の前に判定する。subshell 内で拒否すると supervisor が fake PID と成功ログを残しやすい
 - destructive な `git reset --hard` を守る safety check は、同じシェルで直列に実行する。親シェルで検査してから別 subshell で reset すると checkout 競合の race を作る
+- ただし current-mode の reset failure は watchdog 全体の fatal にしない。`set -e` 下ではログを書いて成功ステータスで戻し、その回の再起動だけを見送る

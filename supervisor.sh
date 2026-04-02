@@ -32,7 +32,10 @@ start_bot() {
       echo "[supervisor] refusing current-mode reset on branch $current_branch; automatic recovery is limited to $BRANCH" >> "$LOG_DIR/supervisor.log"
       return
     fi
-    git reset --hard "$LAST_SEEN" >> "$LOG_DIR/supervisor.log" 2>&1 || return
+    if ! git reset --hard "$LAST_SEEN" >> "$LOG_DIR/supervisor.log" 2>&1; then
+      echo "[supervisor] current-mode reset failed; skipping this restart attempt" >> "$LOG_DIR/supervisor.log"
+      return
+    fi
     (
       cd "$REPO" || exit 1
       . "$REPO/setenv.sh"
