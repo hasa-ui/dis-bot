@@ -2,7 +2,10 @@
 
 set -eu
 
-cd /data/data/com.termux/files/home/discord-bot || exit 1
+REPO="/data/data/com.termux/files/home/discord-bot"
+BOT_ENTRYPOINT="$REPO/bot.py"
+
+cd "$REPO" || exit 1
 
 CURRENT_BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo detached)"
 
@@ -15,5 +18,5 @@ if ! git checkout main; then
 fi
 git reset --hard origin/main
 
-. /data/data/com.termux/files/home/discord-bot/setenv.sh
-exec python /data/data/com.termux/files/home/discord-bot/bot.py
+. "$REPO/setenv.sh"
+exec python "$BOT_ENTRYPOINT"

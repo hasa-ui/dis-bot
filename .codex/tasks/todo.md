@@ -1,5 +1,8 @@
 # TODO
 
+- [x] `bot.py` を薄い起動専用へ縮小し、内部を `status_bot/` パッケージへ分割する
+- [x] DB / 状態遷移 / UI / slash command をモジュール分離する
+- [x] 分割後のロジックテストと起動スクリプト確認を追加する
 - [x] 段階数縮小時に丸め対象 record の期限を新段階に合わせて再計算する
 - [x] `status_set` の設定完了判定を実際の満了経路ベースへ修正する
 - [x] 検証結果と再発防止メモを追記する
@@ -65,6 +68,10 @@
 
 ## Changes
 
+- `bot.py` を `create_bot()` を呼ぶ薄いエントリポイントへ置き換え、実装本体を `status_bot/` パッケージへ分割した
+- `status_bot/` に `config.py` / `models.py` / `validation.py` / `formatters.py` / `permissions.py` / `store.py` / `service.py` / `views.py` / `commands.py` / `app.py` を追加し、DB・遷移・UI・コマンド責務を分離した
+- `runbot.sh` と `supervisor.sh` は `BOT_ENTRYPOINT` 定数を持つ形にそろえ、薄くなった `bot.py` を共通参照するようにした
+- `tests/` に移行・遷移・経路判定・フォーマットを確認する `unittest` ベースの回帰テストを追加した
 - `bot.py` の `set_stage_count()` で段階数縮小時に上位 record の `stage_index` だけでなく `expires_at` も新しい最大段階の duration へ再計算するようにした
 - `bot.py` に `stage_path_is_ready()` を追加し、`status_set` の準備判定を「1..N 全段必須」から、選択段階の `next` / `clear` / `hold` で実際に到達する経路だけを見る方式へ変更した
 - `bot.py` の固定 `light/medium/heavy` 前提をやめ、`guild_status_settings` / `guild_status_stages` / `status_records` ベースの可変段階ステータスモデルへ置き換えた
@@ -115,6 +122,10 @@
 
 ## Verification
 
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 7 tests, OK
+- 実施: `tmpdb=/tmp/dis-bot-refactor-smoke-$$.db DISCORD_TOKEN=dummy DB_PATH=\"$tmpdb\" python ...` -> `entrypoint_ok`
+- 実施内容: 薄い `bot.py` から `create_bot()` できること、`SetupHomeView` / `StageSetupView` が分割後も生成できることを確認
 - 実施: `tmpdb=/tmp/dis-bot-fix-$$.db DISCORD_TOKEN=dummy DB_PATH=\"$tmpdb\" python ...` -> `clamp_ok`
 - 実施内容: 段階数を 5 から 3 へ減らしたとき、旧 stage 5 record が stage 3 へ丸められ、`expires_at` が新 stage 3 duration 基準へ再計算されることを確認
 - 実施: `tmpdb=/tmp/dis-bot-fix-path-$$.db DISCORD_TOKEN=dummy DB_PATH=\"$tmpdb\" python ...` -> `path_ok`
