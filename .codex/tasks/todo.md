@@ -1,5 +1,14 @@
 # TODO
 
+- [x] 段階数縮小時に丸め対象 record の期限を新段階に合わせて再計算する
+- [x] `status_set` の設定完了判定を実際の満了経路ベースへ修正する
+- [x] 検証結果と再発防止メモを追記する
+- [x] 固定3段の違反モデルを可変段階のステータスモデルへ置き換える
+- [x] 新DBテーブルと旧データ自動移行を実装する
+- [x] `/setup` を可変段階設定UIへ作り替える
+- [x] `violation` 系コマンドを `status` 系へ置き換える
+- [x] 自動降格/維持/解除ロジックを段階単位設定へ対応させる
+- [x] 構文検証と主要シナリオの静的確認結果を追記する
 - [x] current-mode の reset 失敗で supervisor 自体が終了しないようにする
 - [x] 起動スクリプトの検証結果を追記する
 - [x] current-mode の安全確認と hard reset を同じシェルで実行する
@@ -56,6 +65,13 @@
 
 ## Changes
 
+- `bot.py` の `set_stage_count()` で段階数縮小時に上位 record の `stage_index` だけでなく `expires_at` も新しい最大段階の duration へ再計算するようにした
+- `bot.py` に `stage_path_is_ready()` を追加し、`status_set` の準備判定を「1..N 全段必須」から、選択段階の `next` / `clear` / `hold` で実際に到達する経路だけを見る方式へ変更した
+- `bot.py` の固定 `light/medium/heavy` 前提をやめ、`guild_status_settings` / `guild_status_stages` / `status_records` ベースの可変段階ステータスモデルへ置き換えた
+- `bot.py` の起動時マイグレーションで、旧 `guild_settings` / `sanctions` の 3 段違反データを新ステータス構造へ自動変換するようにした
+- `bot.py` の自動遷移を段階単位の `next` / `clear` / `hold` へ一般化し、最終満了後も同段階維持できるようにした
+- `bot.py` の `/setup` を段階数設定 + 段階編集UIへ作り替え、1〜10 段階・ロール・日数・表示名・満了時動作を設定できるようにした
+- `bot.py` の公開コマンドを `/status_config` / `/status_set` / `/status_clear` / `/status_view` へ置き換え、表示文言も `違反` から `ステータス` へ寄せた
 - `supervisor.sh` の `start_bot(mode=current)` で、起動前に `current_local_rev() == LAST_SEEN` を再確認し、さらに `git reset --hard "$LAST_SEEN"` で last-known-good tree を復元してから `bot.py` を起動するようにした
 - `supervisor.sh` の `start_bot(mode=current)` で current branch も確認し、`main` 以外では `git reset --hard "$LAST_SEEN"` を拒否して `supervisor.log` に記録するようにした
 - `supervisor.sh` の current-mode 起動前チェックを background subshell の外へ移し、拒否時は PID ファイル更新と `started bot` ログ出力に進まないようにした
@@ -99,6 +115,14 @@
 
 ## Verification
 
+- 実施: `tmpdb=/tmp/dis-bot-fix-$$.db DISCORD_TOKEN=dummy DB_PATH=\"$tmpdb\" python ...` -> `clamp_ok`
+- 実施内容: 段階数を 5 から 3 へ減らしたとき、旧 stage 5 record が stage 3 へ丸められ、`expires_at` が新 stage 3 duration 基準へ再計算されることを確認
+- 実施: `tmpdb=/tmp/dis-bot-fix-path-$$.db DISCORD_TOKEN=dummy DB_PATH=\"$tmpdb\" python ...` -> `path_ok`
+- 実施内容: `stage 4 = hold`、`stage 1..3 = 未設定/clear` の構成で `stage_path_is_ready(config, 4)` は通り、未設定の stage 3 単体は通らないことを確認
+- 実施: `python -m py_compile bot.py` -> 成功
+- 実施: `DISCORD_TOKEN=dummy DB_PATH=/tmp/dis-bot-generic-smoke-$$.db python ...` のスモークで、旧3段設定の自動移行、4段化、段階保存、`hold` 設定、`SetupHomeView` / `StageSetupView` の生成成功を確認
+- 実施: `DISCORD_TOKEN=dummy DB_PATH=/tmp/dis-bot-generic-behavior-$$.db python ...` の振る舞い確認で、`hold` 満了後に `expires_at = NULL` へ変わることと、段階数縮小時に上位 record が新最大段階へ丸められることを確認
+- 実施: `rg -n "違反|violation" bot.py` -> ユーザー向けの旧 `違反` / `violation_*` 命名は残っておらず、`violations.db` と旧移行テーブル参照だけが残ることを確認
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
 - 実施: `start_bot(mode=current)` が `current_local_rev() == LAST_SEEN` に加えて `current_branch == main` の場合だけ `git reset --hard "$LAST_SEEN"` を行い、非 `main` では自動再起動を拒否することをコード上で確認
 - 実施: current-mode の拒否条件が background 起動前に評価され、拒否時は `echo $! > "$PID_FILE"` と `started bot` ログ出力に進まないことをコード上で確認

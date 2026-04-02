@@ -21,3 +21,5 @@
 - current-mode の起動拒否条件は background 化の前に判定する。subshell 内で拒否すると supervisor が fake PID と成功ログを残しやすい
 - destructive な `git reset --hard` を守る safety check は、同じシェルで直列に実行する。親シェルで検査してから別 subshell で reset すると checkout 競合の race を作る
 - ただし current-mode の reset failure は watchdog 全体の fatal にしない。`set -e` 下ではログを書いて成功ステータスで戻し、その回の再起動だけを見送る
+- 可変段階モデルで上位 record を下位段階へ丸めるときは、`stage_index` だけでなく `expires_at` も新段階の duration に合わせて再計算する
+- 段階付与の readiness 判定は「下位段階が全部埋まっているか」ではなく、その段階の `next` / `clear` / `hold` から実際に到達する経路だけを見る
