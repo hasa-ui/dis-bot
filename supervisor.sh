@@ -36,8 +36,8 @@ stop_bot() {
 }
 
 deploy_main() {
-  git checkout "$BRANCH" >> "$LOG_DIR/supervisor.log" 2>&1 || return 1
-  git reset --hard "$REMOTE_REF" >> "$LOG_DIR/supervisor.log" 2>&1 || return 1
+  git checkout "$BRANCH" >> "$LOG_DIR/supervisor.log" 2>&1 || :
+  git reset --hard "$REMOTE_REF" >> "$LOG_DIR/supervisor.log" 2>&1
 }
 
 current_remote_rev() {

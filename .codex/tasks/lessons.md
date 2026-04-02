@@ -8,3 +8,4 @@
 - 更新監視からの再デプロイでは、新版の deploy 成功を確認するまで稼働中プロセスを止めない
 - `runbot.sh` のような直接起動経路で更新を必須にする場合は、`set -e` か各コマンドの明示終了で update 失敗後の stale 起動を防ぐ
 - `sh` では `if func; then` の条件式内で `set -e` 依存にしない。関数内の失敗は `|| return 1` などで明示的に伝播させる
+- ただし `git checkout` は tracked 変更で失敗しても `git reset --hard origin/main` が自己回復できるため、checkout だけを即 fatal にしない

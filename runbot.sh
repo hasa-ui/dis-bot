@@ -5,7 +5,7 @@ set -eu
 cd /data/data/com.termux/files/home/discord-bot || exit 1
 
 git fetch origin
-git checkout main
+git checkout main || :
 git reset --hard origin/main
 
 . /data/data/com.termux/files/home/discord-bot/setenv.sh

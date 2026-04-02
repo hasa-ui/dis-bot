@@ -1,5 +1,7 @@
 # TODO
 
+- [x] tracked 変更で `git checkout` が失敗しても `reset --hard` まで進むようにする
+- [x] 起動スクリプトの検証結果を追記する
 - [x] `runbot.sh` が自己更新失敗時に即終了するようにする
 - [x] `supervisor.sh` の `deploy_main` が途中失敗を成功扱いしないようにする
 - [x] 起動スクリプトの検証結果を追記する
@@ -29,6 +31,8 @@
 
 ## Changes
 
+- `runbot.sh` の `git checkout main` を `|| :` 付きにし、tracked 変更で checkout が失敗しても `git reset --hard origin/main` による自己回復を継続するようにした
+- `supervisor.sh` の `deploy_main()` でも `git checkout "$BRANCH"` を `|| :` に戻し、tracked 変更で checkout が失敗しても reset により deploy を続行できるようにした
 - `runbot.sh` に `set -eu` を追加し、自己更新の `git` コマンドが失敗したら stale な bot を起動せず即終了するようにした
 - `supervisor.sh` の `deploy_main()` で各 `git` コマンドを `|| return 1` 付きにし、`if deploy_main; then ...` でも途中失敗を成功扱いしないようにした
 - `runbot.sh` に `git fetch` / `checkout main` / `reset --hard origin/main` を戻し、既存の直接起動フローでも自己更新されるようにした
@@ -52,8 +56,9 @@
 ## Verification
 
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
+- 実施: `git checkout ... || :` のあとに `git reset --hard ...` が続く形になっており、tracked 変更で checkout が失敗しても reset まで進むことをコード上で確認
 - 実施: `runbot.sh` が `set -eu` で始まり、更新失敗時に python 実行へ進まないことをコード上で確認
-- 実施: `deploy_main()` の各 `git` コマンドが `|| return 1` 付きになり、`if deploy_main` でも checkout 失敗を成功扱いしないことをコード上で確認
+- 実施: `deploy_main()` の成否が最終の `git reset --hard "$REMOTE_REF"` に依存し、checkout 失敗だけでは deploy を止めないことをコード上で確認
 - 実施: `stat -c '%A %n' supervisor.sh` -> `-rwxr-xr-x supervisor.sh`
 - 実施: `git diff --summary -- runbot.sh supervisor.sh` -> `supervisor.sh` が `100755` になったことを確認
 - 実施: `python -m py_compile bot.py` -> 成功
