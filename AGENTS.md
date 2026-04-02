@@ -1,19 +1,27 @@
 # AGENTS.md
 
 ## このリポジトリの目的
-Discord の違反ロール管理 Bot を保守する。
+Discord のステータス段階管理 Bot を保守する。
 主な用途は以下。
-- サーバーごとの違反ロール設定
-- サーバーごとの違反期間設定
-- 自動降格（重度 → 中度 → 軽度 → 解除）
+- サーバーごとのステータス段階設定
+- 段階ごとのロール / 期間 / 満了時動作 (`next` / `clear` / `hold`) の管理
+- 自動段階遷移と再参加時のロール再適用
 - Android Termux 上での運用
 - SQLite による状態保存
+- 旧 3 段違反モデルからの自動移行互換の維持
 
 ## 主要ファイル
-- `bot.py`: Bot 本体。スラッシュコマンド、DB、ロール更新処理を持つ
-- `runbot.sh`: Bot 起動スクリプト
+- `bot.py`: 薄い起動エントリポイント。`status_bot` を組み立てて起動する
+- `status_bot/app.py`: Bot 本体の組み立て、イベント、定期処理
+- `status_bot/commands.py`: slash command 登録
+- `status_bot/views.py`: `/setup` の View / Modal
+- `status_bot/service.py`: 状態遷移、ロール再適用、設定保存ユースケース
+- `status_bot/store.py`: SQLite 初期化、legacy migration、設定 / record CRUD
+- `runbot.sh`: 自己更新付きの直接起動スクリプト
+- `supervisor.sh`: 監視、再起動、更新反映を行う supervisor
 - `setenv.sh`: ローカル実行用の環境変数読み込みファイル（実値はコミットしない）
-- `.termux/boot/start-bot` 相当: 端末再起動後の自動起動用
+- `setenv.example.sh`: 環境変数ファイルのテンプレート
+- `tests/`: `unittest` ベースの回帰テスト
 - `violations.db`: 実行時に生成される SQLite DB
 - `logs/`: 実行ログ置き場
 - `.codex/tasks/todo.md`: 作業計画・進捗・検証ログ
@@ -57,10 +65,11 @@ Discord の違反ロール管理 Bot を保守する。
 
 ## Verification
 - 少なくとも以下を優先して検証する
-  - `python -m py_compile bot.py`
-  - 主要な構文エラーがないこと
+  - `python -m py_compile bot.py status_bot/*.py tests/*.py`
+  - `python -m unittest discover -s tests`
+  - Shell 変更時は `sh -n runbot.sh supervisor.sh`
   - slash command 追加・変更時は、想定される入出力を説明する
-  - DB 変更時は、既存 DB で何が起きるかを説明する
+  - DB 変更時は、既存 DB と legacy migration で何が起きるかを説明する
 - 実行できない検証は「未実施」と明記し、理由を書く
 - 高リスク変更では、差分意図と失敗時の影響を要約する
 
@@ -68,22 +77,29 @@ Discord の違反ロール管理 Bot を保守する。
 - サーバーごとの設定は `guild_id` 単位で扱う
 - ロールは名前ではなく ID を基準に扱う
 - 権限不足時のエラーメッセージは残す
-- 自動降格ロジックは `heavy -> medium -> light -> clear` を崩さない
+- 段階数は guild ごとに可変であり、固定 3 段前提で実装しない
+- 各段階はロール ID・期間・満了時動作 (`next` / `clear` / `hold`) を持つ前提で扱う
+- 旧 `light` / `medium` / `heavy` モデルは legacy migration としてのみ扱う
 - 既存動作を変える場合は、変更前後の挙動差を説明する
-- 期間設定変更が既存処分へ与える影響を見落とさない
+- 設定変更が既存 active record へ与える影響を見落とさない
 
 ## Termux / Android 固有ルール
 - パスは Termux 環境で壊れないことを優先する
 - `sh` 互換を意識し、不要に bash 専用構文を増やさない
 - 自動起動スクリプトは二重起動を避ける
+- `runbot.sh` と `supervisor.sh` の両方が運用入口になりうる前提で扱う
+- `BOT_ENTRYPOINT=bot.py` の共通前提を崩さない
+- supervisor の known-good checkout / 自動再起動安全性を壊さない
 - `tmux` セッション名やログ出力先を勝手に変更しない
 - Android のバックグラウンド制約を前提に、常時稼働前提の断定をしない
-
+- 
 ## Review guidelines
 - 実トークンや秘密情報が差分に含まれていないかを最優先で確認する
 - `setenv.sh`、`.db`、`logs/` がコミット対象に入っていないか確認する
 - 無関係ファイルの変更が混ざっていないか確認する
+- `commands` / `views` / `service` / `store` の責務分離を壊していないか確認する
 - 権限ロジック、ロール階層前提、DB 更新条件に破綻がないか確認する
+- `guild_status_settings` / `guild_status_stages` / `status_records` と legacy migration の整合性を確認する
 - 変更が要求範囲を超えていないか確認する
 - 例外処理で障害時に黙って壊れないか確認する
 
