@@ -16,3 +16,4 @@
 - deploy failure を再試行中でも crash recovery は止めない。failure 分岐でも current checkout の起動経路を通し、bot が落ちたままにならないようにする
 - ただし deploy failure 後の current-checkout restart は、deploy 前後で `HEAD` が同じときだけ許可する。途中で checkout が変わった失敗では last known-good を保護する
 - さらにその判定基準は毎回の直前 `HEAD` ではなく、最後に正常起動した known-good revision に固定する。失敗で変わった checkout を次回基準に昇格させない
+- current-checkout 起動でも dirty worktree をそのまま実行しない。`LAST_SEEN` と一致確認したうえで `git reset --hard "$LAST_SEEN"` により known-good tree を復元してから起動する

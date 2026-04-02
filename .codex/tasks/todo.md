@@ -1,5 +1,7 @@
 # TODO
 
+- [x] current mode 起動前に last-known-good revision を復元する
+- [x] 起動スクリプトの検証結果を追記する
 - [x] current fallback の判定を last-known-good revision 基準に固定する
 - [x] unsafe checkout 上の自動再起動を防ぐ
 - [x] 起動スクリプトの検証結果を追記する
@@ -46,6 +48,7 @@
 
 ## Changes
 
+- `supervisor.sh` の `start_bot(mode=current)` で、起動前に `current_local_rev() == LAST_SEEN` を再確認し、さらに `git reset --hard "$LAST_SEEN"` で last-known-good tree を復元してから `bot.py` を起動するようにした
 - `supervisor.sh` の `LAST_SEEN` を初回起動時の local revision で固定初期化し、失敗後に変質した checkout で上書きしないようにした
 - deploy failure 後の current fallback 判定を `current_local_rev() == LAST_SEEN` に統一し、last-known-good revision と一致する checkout だけ再起動するようにした
 - `NEW_REMOTE == LAST_SEEN` の通常再起動分岐でも current checkout が last-known-good と一致しない場合は自動再起動を拒否し、`supervisor.log` へ記録するようにした
@@ -85,6 +88,7 @@
 ## Verification
 
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
+- 実施: `start_bot(mode=current)` が `LAST_SEEN` 一致確認と `git reset --hard "$LAST_SEEN"` を行ってから `bot.py` を起動する構造になっていることをコード上で確認
 - 実施: `LAST_SEEN` が初回 local revision のまま保持され、deploy failure 分岐・通常再起動分岐の両方で `current_local_rev() == LAST_SEEN` を条件にしていることをコード上で確認
 - 実施: 初回起動・更新ループの両方で、deploy failure 後の current fallback が `HEAD` 未変更時にだけ許可されることをコード上で確認
 - 実施: 更新ループの deploy failure 分岐で `start_bot current` を呼ぶ構造になっており、retry 中でも bot が落ちていれば current checkout を再起動できることをコード上で確認
