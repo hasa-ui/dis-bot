@@ -14,3 +14,4 @@
 - deploy failure 後に current checkout で継続するなら、fallback 起動は `runbot.sh` を再利用せず update を伴わない直接起動へ切り替える
 - 監視ループの retry 判定に使う状態 (`LAST_SEEN`) は「最後に見た remote」ではなく「実際に動かしている checkout」に合わせる。失敗した revision を処理済み扱いにしない
 - deploy failure を再試行中でも crash recovery は止めない。failure 分岐でも current checkout の起動経路を通し、bot が落ちたままにならないようにする
+- ただし deploy failure 後の current-checkout restart は、deploy 前後で `HEAD` が同じときだけ許可する。途中で checkout が変わった失敗では last known-good を保護する

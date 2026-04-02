@@ -66,14 +66,22 @@ current_local_rev() {
 
 # 初回起動
 INITIAL_START_MODE="update"
+INITIAL_LOCAL_REV="$(current_local_rev 2>/dev/null || echo none)"
 git fetch origin >> "$LOG_DIR/supervisor.log" 2>&1 || true
-if [ "$(current_local_rev 2>/dev/null || echo none)" != "$(current_remote_rev 2>/dev/null || echo none)" ]; then
+if [ "$INITIAL_LOCAL_REV" != "$(current_remote_rev 2>/dev/null || echo none)" ]; then
   if ! deploy_main; then
-    echo "[supervisor] initial deploy failed; continuing with current checkout" >> "$LOG_DIR/supervisor.log"
-    INITIAL_START_MODE="current"
+    if [ "$(current_local_rev 2>/dev/null || echo none)" = "$INITIAL_LOCAL_REV" ]; then
+      echo "[supervisor] initial deploy failed; continuing with current checkout" >> "$LOG_DIR/supervisor.log"
+      INITIAL_START_MODE="current"
+    else
+      echo "[supervisor] initial deploy failed after modifying checkout; refusing current-checkout start" >> "$LOG_DIR/supervisor.log"
+      INITIAL_START_MODE="none"
+    fi
   fi
 fi
-start_bot "$INITIAL_START_MODE"
+if [ "$INITIAL_START_MODE" != "none" ]; then
+  start_bot "$INITIAL_START_MODE"
+fi
 
 LAST_SEEN="$(current_local_rev 2>/dev/null || echo none)"
 
@@ -85,13 +93,18 @@ while true; do
 
   if [ "$NEW_REMOTE" != "$LAST_SEEN" ]; then
     echo "[supervisor] detected update: $LAST_SEEN -> $NEW_REMOTE" >> "$LOG_DIR/supervisor.log"
+    PRE_DEPLOY_REV="$(current_local_rev 2>/dev/null || echo none)"
     if deploy_main; then
       stop_bot
       start_bot
       LAST_SEEN="$NEW_REMOTE"
     else
       echo "[supervisor] deploy failed; keeping current bot running" >> "$LOG_DIR/supervisor.log"
-      start_bot current
+      if [ "$(current_local_rev 2>/dev/null || echo none)" = "$PRE_DEPLOY_REV" ]; then
+        start_bot current
+      else
+        echo "[supervisor] deploy failure changed checkout; refusing current-checkout restart" >> "$LOG_DIR/supervisor.log"
+      fi
     fi
   else
     # Bot が落ちていたら再起動

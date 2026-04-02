@@ -1,5 +1,7 @@
 # TODO
 
+- [x] deploy failure 後の current fallback を `HEAD` 不変時だけに制限する
+- [x] 起動スクリプトの検証結果を追記する
 - [x] deploy failure 中でも current checkout の crash recovery を維持する
 - [x] 起動スクリプトの検証結果を追記する
 - [x] `supervisor.sh` の初回 deploy 失敗時に current checkout で bot を起動する
@@ -41,6 +43,9 @@
 
 ## Changes
 
+- `supervisor.sh` の初回起動で `INITIAL_LOCAL_REV` を保持し、deploy failure 後に `HEAD` が変わっていない場合だけ current checkout 起動へフォールバックするようにした
+- 更新ループでも `PRE_DEPLOY_REV` を保持し、deploy failure 後に `HEAD` が変わっていない場合だけ `start_bot current` を許可するようにした
+- `HEAD` が変わった failure では current-checkout restart を拒否し、`supervisor.log` に明示的に記録するようにした
 - 更新ループの deploy failure 分岐でも `start_bot current` を呼ぶようにし、同じ remote revision を再試行中でも current checkout の bot が落ちていれば再起動できるようにした
 - `supervisor.sh` の `start_bot()` に `mode` 引数を追加し、初回 deploy failure 時だけ `runbot.sh` を経由せず current checkout の `bot.py` を直接起動できるようにした
 - 初回起動の deploy failure 時は `INITIAL_START_MODE="current"` に切り替え、失敗した自己更新を再実行せず current checkout で bot を起動するようにした
@@ -74,6 +79,7 @@
 ## Verification
 
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
+- 実施: 初回起動・更新ループの両方で、deploy failure 後の current fallback が `HEAD` 未変更時にだけ許可されることをコード上で確認
 - 実施: 更新ループの deploy failure 分岐で `start_bot current` を呼ぶ構造になっており、retry 中でも bot が落ちていれば current checkout を再起動できることをコード上で確認
 - 実施: `start_bot()` が `mode=current` で `runbot.sh` を経由せず `bot.py` を直接起動する構造になっていることをコード上で確認
 - 実施: 初回起動時の `LAST_SEEN` が `current_local_rev()` になっており、initial deploy failure 後も同じ remote revision を再試行できることをコード上で確認
