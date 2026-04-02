@@ -10,3 +10,4 @@
 - `sh` では `if func; then` の条件式内で `set -e` 依存にしない。関数内の失敗は `|| return 1` などで明示的に伝播させる
 - ただし `git checkout` は tracked 変更で失敗しても `git reset --hard origin/main` が自己回復できるため、checkout だけを即 fatal にしない
 - その自己回復は「現在ブランチが main の場合」に限定する。非 `main` ブランチで checkout failure を無視すると、`reset --hard origin/main` が別ブランチの作業を破壊する
+- supervisor の初回起動パスも更新ループと同じ失敗処理に揃える。`set -e` 下の top-level deploy failure を未処理のまま置くと、監視自体が止まる

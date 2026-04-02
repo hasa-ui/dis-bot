@@ -57,7 +57,9 @@ current_local_rev() {
 # 初回起動
 git fetch origin >> "$LOG_DIR/supervisor.log" 2>&1 || true
 if [ "$(current_local_rev 2>/dev/null || echo none)" != "$(current_remote_rev 2>/dev/null || echo none)" ]; then
-  deploy_main
+  if ! deploy_main; then
+    echo "[supervisor] initial deploy failed; continuing with current checkout" >> "$LOG_DIR/supervisor.log"
+  fi
 fi
 start_bot
 
