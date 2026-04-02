@@ -1,5 +1,35 @@
 # TODO
 
+- [x] current-mode の reset 失敗で supervisor 自体が終了しないようにする
+- [x] 起動スクリプトの検証結果を追記する
+- [x] current-mode の安全確認と hard reset を同じシェルで実行する
+- [x] 起動スクリプトの検証結果を追記する
+- [x] current-mode 起動拒否時に fake PID と成功ログを残さないようにする
+- [x] 起動スクリプトの検証結果を追記する
+- [x] `start_bot current` が非 `main` ブランチを hard reset しないようにする
+- [x] 起動スクリプトの検証結果を追記する
+- [x] current mode 起動前に last-known-good revision を復元する
+- [x] 起動スクリプトの検証結果を追記する
+- [x] current fallback の判定を last-known-good revision 基準に固定する
+- [x] unsafe checkout 上の自動再起動を防ぐ
+- [x] 起動スクリプトの検証結果を追記する
+- [x] deploy failure 後の current fallback を `HEAD` 不変時だけに制限する
+- [x] 起動スクリプトの検証結果を追記する
+- [x] deploy failure 中でも current checkout の crash recovery を維持する
+- [x] 起動スクリプトの検証結果を追記する
+- [x] `supervisor.sh` の初回 deploy 失敗時に current checkout で bot を起動する
+- [x] `supervisor.sh` の retry 状態を実際の checkout に合わせる
+- [x] 起動スクリプトの検証結果を追記する
+- [x] `supervisor.sh` の初回起動でも `deploy_main` 失敗を処理する
+- [x] 起動スクリプトの検証結果を追記する
+- [x] dirty な非 `main` ブランチでは `reset --hard origin/main` に進まないようにする
+- [x] `main` ブランチ上では引き続き自己回復できることを確認する
+- [x] 起動スクリプトの検証結果を追記する
+- [x] tracked 変更で `git checkout` が失敗しても `reset --hard` まで進むようにする
+- [x] 起動スクリプトの検証結果を追記する
+- [x] `runbot.sh` が自己更新失敗時に即終了するようにする
+- [x] `supervisor.sh` の `deploy_main` が途中失敗を成功扱いしないようにする
+- [x] 起動スクリプトの検証結果を追記する
 - [x] `runbot.sh` の自己更新挙動を維持する
 - [x] `supervisor.sh` で deploy 失敗時に既存 bot を止めないようにする
 - [x] `supervisor.sh` に実行権限を付ける
@@ -26,6 +56,29 @@
 
 ## Changes
 
+- `supervisor.sh` の `start_bot(mode=current)` で、起動前に `current_local_rev() == LAST_SEEN` を再確認し、さらに `git reset --hard "$LAST_SEEN"` で last-known-good tree を復元してから `bot.py` を起動するようにした
+- `supervisor.sh` の `start_bot(mode=current)` で current branch も確認し、`main` 以外では `git reset --hard "$LAST_SEEN"` を拒否して `supervisor.log` に記録するようにした
+- `supervisor.sh` の current-mode 起動前チェックを background subshell の外へ移し、拒否時は PID ファイル更新と `started bot` ログ出力に進まないようにした
+- `supervisor.sh` の current-mode では `current_local_rev()` / branch 確認と `git reset --hard "$LAST_SEEN"` を background 化前の同じシェルで実行し、background 側は `bot.py` 起動だけを担当するようにした
+- `supervisor.sh` の current-mode reset 失敗時は `supervisor.log` に記録してその回の再起動だけをスキップし、非 0 return で supervisor 自体を落とさないようにした
+- `supervisor.sh` の `LAST_SEEN` を初回起動時の local revision で固定初期化し、失敗後に変質した checkout で上書きしないようにした
+- deploy failure 後の current fallback 判定を `current_local_rev() == LAST_SEEN` に統一し、last-known-good revision と一致する checkout だけ再起動するようにした
+- `NEW_REMOTE == LAST_SEEN` の通常再起動分岐でも current checkout が last-known-good と一致しない場合は自動再起動を拒否し、`supervisor.log` へ記録するようにした
+- `supervisor.sh` の初回起動で `INITIAL_LOCAL_REV` を保持し、deploy failure 後に `HEAD` が変わっていない場合だけ current checkout 起動へフォールバックするようにした
+- 更新ループでも `PRE_DEPLOY_REV` を保持し、deploy failure 後に `HEAD` が変わっていない場合だけ `start_bot current` を許可するようにした
+- `HEAD` が変わった failure では current-checkout restart を拒否し、`supervisor.log` に明示的に記録するようにした
+- 更新ループの deploy failure 分岐でも `start_bot current` を呼ぶようにし、同じ remote revision を再試行中でも current checkout の bot が落ちていれば再起動できるようにした
+- `supervisor.sh` の `start_bot()` に `mode` 引数を追加し、初回 deploy failure 時だけ `runbot.sh` を経由せず current checkout の `bot.py` を直接起動できるようにした
+- 初回起動の deploy failure 時は `INITIAL_START_MODE="current"` に切り替え、失敗した自己更新を再実行せず current checkout で bot を起動するようにした
+- `supervisor.sh` の `LAST_SEEN` 初期値を `current_local_rev()` に変更し、初回 deploy に失敗した remote revision も次ループで再試行できるようにした
+- `supervisor.sh` の初回起動でも `deploy_main()` を `if ! ...; then` で包み、失敗時は `supervisor.log` に記録してから `start_bot` と監視ループへ進むようにした
+- `runbot.sh` で更新前のブランチ名を保持し、`git checkout main` が失敗した場合は現在ブランチが `main` のときだけ `reset --hard origin/main` へ進み、非 `main` なら停止するようにした
+- `supervisor.sh` の `deploy_main()` でも更新前ブランチを確認し、`checkout main` 失敗時は `main` 上のみ reset 続行、非 `main` なら deploy failure として bot を止めないようにした
+- `supervisor.sh` は非 `main` ブランチ上での checkout failure を `supervisor.log` へ明示的に記録するようにした
+- `runbot.sh` の `git checkout main` を `|| :` 付きにし、tracked 変更で checkout が失敗しても `git reset --hard origin/main` による自己回復を継続するようにした
+- `supervisor.sh` の `deploy_main()` でも `git checkout "$BRANCH"` を `|| :` に戻し、tracked 変更で checkout が失敗しても reset により deploy を続行できるようにした
+- `runbot.sh` に `set -eu` を追加し、自己更新の `git` コマンドが失敗したら stale な bot を起動せず即終了するようにした
+- `supervisor.sh` の `deploy_main()` で各 `git` コマンドを `|| return 1` 付きにし、`if deploy_main; then ...` でも途中失敗を成功扱いしないようにした
 - `runbot.sh` に `git fetch` / `checkout main` / `reset --hard origin/main` を戻し、既存の直接起動フローでも自己更新されるようにした
 - `supervisor.sh` の `deploy_main()` から二重の `git fetch` を外し、更新検知後は deploy 成功時のみ bot を stop/start するようにした
 - `supervisor.sh` に実行権限を付け、直接起動できるようにした
@@ -47,6 +100,21 @@
 ## Verification
 
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
+- 実施: `start_bot(mode=current)` が `current_local_rev() == LAST_SEEN` に加えて `current_branch == main` の場合だけ `git reset --hard "$LAST_SEEN"` を行い、非 `main` では自動再起動を拒否することをコード上で確認
+- 実施: current-mode の拒否条件が background 起動前に評価され、拒否時は `echo $! > "$PID_FILE"` と `started bot` ログ出力に進まないことをコード上で確認
+- 実施: current-mode の `git reset --hard "$LAST_SEEN"` が parent 側の branch/revision チェック直後に実行され、background subshell では reset を行わないことをコード上で確認
+- 実施: current-mode の `git reset --hard "$LAST_SEEN"` 失敗時はログ出力後に成功ステータスで `return` し、`set -e` 下でも supervisor を継続できる構造になっていることをコード上で確認
+- 実施: `start_bot(mode=current)` が `LAST_SEEN` 一致確認と `git reset --hard "$LAST_SEEN"` を行ってから `bot.py` を起動する構造になっていることをコード上で確認
+- 実施: `LAST_SEEN` が初回 local revision のまま保持され、deploy failure 分岐・通常再起動分岐の両方で `current_local_rev() == LAST_SEEN` を条件にしていることをコード上で確認
+- 実施: 初回起動・更新ループの両方で、deploy failure 後の current fallback が `HEAD` 未変更時にだけ許可されることをコード上で確認
+- 実施: 更新ループの deploy failure 分岐で `start_bot current` を呼ぶ構造になっており、retry 中でも bot が落ちていれば current checkout を再起動できることをコード上で確認
+- 実施: `start_bot()` が `mode=current` で `runbot.sh` を経由せず `bot.py` を直接起動する構造になっていることをコード上で確認
+- 実施: 初回起動時の `LAST_SEEN` が `current_local_rev()` になっており、initial deploy failure 後も同じ remote revision を再試行できることをコード上で確認
+- 実施: 初回起動ブロックが `if ! deploy_main; then ... fi` となり、失敗時でも `start_bot` へ進むことをコード上で確認
+- 実施: 一時 repo で `main` 上の dirty 状態からは reset により回復できることを確認 (`main_case:reset_ok`)
+- 実施: `runbot.sh` / `supervisor.sh` ともに、checkout failure 時は事前のブランチ名が `main` のときだけ reset を許可し、非 `main` では abort/failure へ分岐することをコード上で確認
+- 実施: `runbot.sh` が `set -eu` で始まり、更新失敗時に python 実行へ進まないことをコード上で確認
+- 実施: `deploy_main()` の成否が最終の `git reset --hard "$REMOTE_REF"` に依存し、checkout 失敗だけでは deploy を止めないことをコード上で確認
 - 実施: `stat -c '%A %n' supervisor.sh` -> `-rwxr-xr-x supervisor.sh`
 - 実施: `git diff --summary -- runbot.sh supervisor.sh` -> `supervisor.sh` が `100755` になったことを確認
 - 実施: `python -m py_compile bot.py` -> 成功

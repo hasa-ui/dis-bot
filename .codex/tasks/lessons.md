@@ -6,3 +6,18 @@
 - Discord の `Role` オブジェクトを UI 状態として保持する場合でも、保存直前に `guild.get_role(id)` で再解決して削除済みロール ID を永続化しない
 - 起動経路を増やすときは、既存エントリポイントの自己更新や自動起動導線を壊していないかを同時に確認する
 - 更新監視からの再デプロイでは、新版の deploy 成功を確認するまで稼働中プロセスを止めない
+- `runbot.sh` のような直接起動経路で更新を必須にする場合は、`set -e` か各コマンドの明示終了で update 失敗後の stale 起動を防ぐ
+- `sh` では `if func; then` の条件式内で `set -e` 依存にしない。関数内の失敗は `|| return 1` などで明示的に伝播させる
+- ただし `git checkout` は tracked 変更で失敗しても `git reset --hard origin/main` が自己回復できるため、checkout だけを即 fatal にしない
+- その自己回復は「現在ブランチが main の場合」に限定する。非 `main` ブランチで checkout failure を無視すると、`reset --hard origin/main` が別ブランチの作業を破壊する
+- supervisor の初回起動パスも更新ループと同じ失敗処理に揃える。`set -e` 下の top-level deploy failure を未処理のまま置くと、監視自体が止まる
+- deploy failure 後に current checkout で継続するなら、fallback 起動は `runbot.sh` を再利用せず update を伴わない直接起動へ切り替える
+- 監視ループの retry 判定に使う状態 (`LAST_SEEN`) は「最後に見た remote」ではなく「実際に動かしている checkout」に合わせる。失敗した revision を処理済み扱いにしない
+- deploy failure を再試行中でも crash recovery は止めない。failure 分岐でも current checkout の起動経路を通し、bot が落ちたままにならないようにする
+- ただし deploy failure 後の current-checkout restart は、deploy 前後で `HEAD` が同じときだけ許可する。途中で checkout が変わった失敗では last known-good を保護する
+- さらにその判定基準は毎回の直前 `HEAD` ではなく、最後に正常起動した known-good revision に固定する。失敗で変わった checkout を次回基準に昇格させない
+- current-checkout 起動でも dirty worktree をそのまま実行しない。`LAST_SEEN` と一致確認したうえで `git reset --hard "$LAST_SEEN"` により known-good tree を復元してから起動する
+- ただしその hard reset も `main` ブランチに限定する。`HEAD` が known-good revision と一致していても、非 `main` ブランチでは tracked 変更を破壊しうるため current-mode の自動復旧を拒否する
+- current-mode の起動拒否条件は background 化の前に判定する。subshell 内で拒否すると supervisor が fake PID と成功ログを残しやすい
+- destructive な `git reset --hard` を守る safety check は、同じシェルで直列に実行する。親シェルで検査してから別 subshell で reset すると checkout 競合の race を作る
+- ただし current-mode の reset failure は watchdog 全体の fatal にしない。`set -e` 下ではログを書いて成功ステータスで戻し、その回の再起動だけを見送る

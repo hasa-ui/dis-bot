@@ -14,13 +14,38 @@ mkdir -p "$LOG_DIR"
 cd "$REPO" || exit 1
 
 start_bot() {
+  mode="${1:-update}"
+  current_branch=""
+
   if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     return
   fi
 
-  "$REPO/runbot.sh" >> "$LOG_DIR/bot.log" 2>&1 &
+  if [ "$mode" = "current" ]; then
+    cd "$REPO" || exit 1
+    if [ "$(current_local_rev 2>/dev/null || echo none)" != "$LAST_SEEN" ]; then
+      echo "[supervisor] refusing current-mode start: checkout is not last known-good revision" >> "$LOG_DIR/supervisor.log"
+      return
+    fi
+    current_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo detached)"
+    if [ "$current_branch" != "$BRANCH" ]; then
+      echo "[supervisor] refusing current-mode reset on branch $current_branch; automatic recovery is limited to $BRANCH" >> "$LOG_DIR/supervisor.log"
+      return
+    fi
+    if ! git reset --hard "$LAST_SEEN" >> "$LOG_DIR/supervisor.log" 2>&1; then
+      echo "[supervisor] current-mode reset failed; skipping this restart attempt" >> "$LOG_DIR/supervisor.log"
+      return
+    fi
+    (
+      cd "$REPO" || exit 1
+      . "$REPO/setenv.sh"
+      exec python "$REPO/bot.py"
+    ) >> "$LOG_DIR/bot.log" 2>&1 &
+  else
+    "$REPO/runbot.sh" >> "$LOG_DIR/bot.log" 2>&1 &
+  fi
   echo $! > "$PID_FILE"
-  echo "[supervisor] started bot pid=$(cat "$PID_FILE")" >> "$LOG_DIR/supervisor.log"
+  echo "[supervisor] started bot pid=$(cat "$PID_FILE") mode=$mode" >> "$LOG_DIR/supervisor.log"
 }
 
 stop_bot() {
@@ -36,7 +61,13 @@ stop_bot() {
 }
 
 deploy_main() {
-  git checkout "$BRANCH" >> "$LOG_DIR/supervisor.log" 2>&1
+  current_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo detached)"
+  if ! git checkout "$BRANCH" >> "$LOG_DIR/supervisor.log" 2>&1; then
+    if [ "$current_branch" != "$BRANCH" ]; then
+      echo "[supervisor] refusing deploy: checkout $BRANCH failed while current branch is $current_branch" >> "$LOG_DIR/supervisor.log"
+      return 1
+    fi
+  fi
   git reset --hard "$REMOTE_REF" >> "$LOG_DIR/supervisor.log" 2>&1
 }
 
@@ -49,13 +80,24 @@ current_local_rev() {
 }
 
 # 初回起動
+INITIAL_START_MODE="update"
+INITIAL_LOCAL_REV="$(current_local_rev 2>/dev/null || echo none)"
+LAST_SEEN="$INITIAL_LOCAL_REV"
 git fetch origin >> "$LOG_DIR/supervisor.log" 2>&1 || true
-if [ "$(current_local_rev 2>/dev/null || echo none)" != "$(current_remote_rev 2>/dev/null || echo none)" ]; then
-  deploy_main
+if [ "$LAST_SEEN" != "$(current_remote_rev 2>/dev/null || echo none)" ]; then
+  if ! deploy_main; then
+    if [ "$(current_local_rev 2>/dev/null || echo none)" = "$LAST_SEEN" ]; then
+      echo "[supervisor] initial deploy failed; continuing with current checkout" >> "$LOG_DIR/supervisor.log"
+      INITIAL_START_MODE="current"
+    else
+      echo "[supervisor] initial deploy failed after modifying checkout; refusing current-checkout start" >> "$LOG_DIR/supervisor.log"
+      INITIAL_START_MODE="none"
+    fi
+  fi
 fi
-start_bot
-
-LAST_SEEN="$(current_remote_rev 2>/dev/null || echo none)"
+if [ "$INITIAL_START_MODE" != "none" ]; then
+  start_bot "$INITIAL_START_MODE"
+fi
 
 while true; do
   sleep "$CHECK_INTERVAL"
@@ -71,9 +113,18 @@ while true; do
       LAST_SEEN="$NEW_REMOTE"
     else
       echo "[supervisor] deploy failed; keeping current bot running" >> "$LOG_DIR/supervisor.log"
+      if [ "$(current_local_rev 2>/dev/null || echo none)" = "$LAST_SEEN" ]; then
+        start_bot current
+      else
+        echo "[supervisor] deploy failure left checkout away from last known-good revision; refusing current-checkout restart" >> "$LOG_DIR/supervisor.log"
+      fi
     fi
   else
     # Bot が落ちていたら再起動
-    start_bot
+    if [ "$(current_local_rev 2>/dev/null || echo none)" = "$LAST_SEEN" ]; then
+      start_bot current
+    else
+      echo "[supervisor] checkout differs from last known-good revision; refusing automatic restart" >> "$LOG_DIR/supervisor.log"
+    fi
   fi
 done
