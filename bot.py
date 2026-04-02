@@ -49,6 +49,13 @@ ROLE_LABELS = {
     "medium": "🟡 中度違反",
     "heavy": "⚫ 重度違反",
 }
+LEVEL_NAMES = {
+    "light": "軽度",
+    "medium": "中度",
+    "heavy": "重度",
+}
+ROLE_LEVELS = ("light", "medium", "heavy")
+SETUP_GUIDANCE = "/setup を実行してください。必要なら /config_roles と /config_durations でも設定できます。"
 
 
 def next_level(level: str) -> Optional[str]:
@@ -331,7 +338,7 @@ class ViolationBot(commands.Bot):
 
         if level is not None:
             if not settings_complete(settings):
-                raise RuntimeError("このサーバーの違反設定が未完了です。/config_roles と /config_durations を確認してください。")
+                raise RuntimeError(f"このサーバーの違反設定が未完了です。{SETUP_GUIDANCE}")
 
             role_id = role_id_from_settings(settings, level)
             role = guild.get_role(role_id)
@@ -516,6 +523,410 @@ LEVEL_CHOICES = [
 ]
 
 
+def format_role_setting(guild: discord.Guild, role_id: Optional[int]) -> str:
+    if role_id is None:
+        return "未設定"
+
+    role = guild.get_role(role_id)
+    if role is None:
+        return f"見つからないロール (ID: {role_id})"
+    return role.mention
+
+
+def format_duration_setting(seconds: Optional[int]) -> str:
+    if seconds is None or seconds <= 0:
+        return "未設定"
+    return f"{seconds // 86400}日"
+
+
+def build_settings_summary_lines(guild: discord.Guild) -> list[str]:
+    settings = bot.get_guild_settings(guild.id)
+    lines = []
+
+    for level in ROLE_LEVELS:
+        role_id = settings[f"{level}_role_id"] if settings is not None else None
+        seconds = settings[f"{level}_seconds"] if settings is not None else None
+        lines.append(f"- {LEVEL_NAMES[level]}ロール: {format_role_setting(guild, role_id)}")
+        lines.append(f"- {LEVEL_NAMES[level]}期間: {format_duration_setting(seconds)}")
+
+    return lines
+
+
+def get_missing_setup_items(settings: Optional[sqlite3.Row]) -> list[str]:
+    missing = []
+
+    for level in ROLE_LEVELS:
+        if settings is None or settings[f"{level}_role_id"] is None:
+            missing.append(f"{LEVEL_NAMES[level]}ロール")
+        if settings is None or settings[f"{level}_seconds"] <= 0:
+            missing.append(f"{LEVEL_NAMES[level]}期間")
+
+    return missing
+
+
+def build_setup_home_message(guild: discord.Guild, *, notice: Optional[str] = None) -> str:
+    settings = bot.get_guild_settings(guild.id)
+    missing = get_missing_setup_items(settings)
+    lines = ["違反設定セットアップ"]
+
+    if notice:
+        lines.append(notice)
+        lines.append("")
+
+    lines.append(f"- 設定状態: {'完了' if settings_complete(settings) else '未完了'}")
+    lines.extend(build_settings_summary_lines(guild))
+
+    if missing:
+        lines.append(f"- 未設定項目: {', '.join(missing)}")
+        lines.append("違反付与を使う前に /setup を完了してください。")
+
+    lines.append("下のボタンからロール設定または期間設定を行えます。")
+    return "\n".join(lines)
+
+
+def build_role_setup_message(selected_roles: dict[str, Optional[discord.Role]]) -> str:
+    lines = ["違反ロール設定"]
+
+    for level in ROLE_LEVELS:
+        role = selected_roles[level]
+        lines.append(f"- {LEVEL_NAMES[level]}: {role.mention if role is not None else '未選択'}")
+
+    lines.append("3つとも別のロールを選んで保存してください。")
+    return "\n".join(lines)
+
+
+def build_role_save_message(
+    light: discord.Role,
+    medium: discord.Role,
+    heavy: discord.Role,
+    refreshed: int,
+    failed: int,
+) -> str:
+    return (
+        "このサーバーの違反ロールを保存しました。\n"
+        f"- 軽度: {light.mention}\n"
+        f"- 中度: {medium.mention}\n"
+        f"- 重度: {heavy.mention}\n"
+        f"- 既存違反者への再適用: {refreshed}件中 {failed}件失敗"
+    )
+
+
+def build_duration_save_message(light_days: int, medium_days: int, heavy_days: int) -> str:
+    return (
+        "このサーバーの違反期間を保存しました。\n"
+        f"- 軽度: {light_days}日\n"
+        f"- 中度: {medium_days}日\n"
+        f"- 重度: {heavy_days}日\n"
+        "既存違反者の現在の期限は変わりません。次回の降格以降から新しい期間が適用されます。"
+    )
+
+
+async def save_guild_role_settings(
+    guild_id: int,
+    light_role_id: int,
+    medium_role_id: int,
+    heavy_role_id: int,
+) -> tuple[int, int]:
+    previous_role_ids = role_ids_from_settings(bot.get_guild_settings(guild_id))
+    bot.upsert_guild_roles(guild_id, light_role_id, medium_role_id, heavy_role_id)
+    return await bot.refresh_guild_violation_roles(
+        guild_id,
+        remove_role_ids=previous_role_ids,
+    )
+
+
+def save_guild_duration_settings(
+    guild_id: int,
+    light_days: int,
+    medium_days: int,
+    heavy_days: int,
+) -> None:
+    bot.upsert_guild_durations(
+        guild_id,
+        days_to_seconds(light_days),
+        days_to_seconds(medium_days),
+        days_to_seconds(heavy_days),
+    )
+
+
+def parse_duration_days(value: str, label: str) -> int:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError(f"{label}の日数を入力してください。")
+    if not stripped.isdigit():
+        raise ValueError(f"{label}の日数は整数で入力してください。")
+
+    days = int(stripped)
+    if not 1 <= days <= 3650:
+        raise ValueError(f"{label}の日数は 1〜3650 の範囲で入力してください。")
+    return days
+
+
+class OwnerOnlyView(discord.ui.View):
+    def __init__(self, owner_id: int) -> None:
+        super().__init__(timeout=600)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.owner_id:
+            return True
+
+        await interaction.response.send_message(
+            "この setup 画面はコマンド実行者のみ操作できます。",
+            ephemeral=True,
+        )
+        return False
+
+
+class SetupHomeView(OwnerOnlyView):
+    @discord.ui.button(label="ロール設定", style=discord.ButtonStyle.primary)
+    async def configure_roles(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        await interaction.response.edit_message(
+            content=build_role_setup_message(load_selected_roles(guild)),
+            view=RoleSetupView(self.owner_id, guild),
+        )
+
+    @discord.ui.button(label="期間設定", style=discord.ButtonStyle.secondary)
+    async def configure_durations(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(DurationSetupModal(self.owner_id, guild))
+
+    @discord.ui.button(label="再表示", style=discord.ButtonStyle.secondary)
+    async def refresh_home(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        await interaction.response.edit_message(
+            content=build_setup_home_message(guild),
+            view=SetupHomeView(self.owner_id),
+        )
+
+
+def load_selected_roles(guild: discord.Guild) -> dict[str, Optional[discord.Role]]:
+    settings = bot.get_guild_settings(guild.id)
+    selected_roles: dict[str, Optional[discord.Role]] = {}
+
+    for level in ROLE_LEVELS:
+        role_id = settings[f"{level}_role_id"] if settings is not None else None
+        selected_roles[level] = guild.get_role(role_id) if role_id is not None else None
+
+    return selected_roles
+
+
+class SetupRoleSelect(discord.ui.RoleSelect):
+    def __init__(
+        self,
+        setup_view: "RoleSetupView",
+        level: str,
+        current_role: Optional[discord.Role],
+        row: int,
+    ) -> None:
+        default_values = [current_role] if current_role is not None else []
+        super().__init__(
+            placeholder=f"{LEVEL_NAMES[level]}違反ロールを選択",
+            min_values=1,
+            max_values=1,
+            default_values=default_values,
+            row=row,
+        )
+        self.setup_view = setup_view
+        self.level = level
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self.setup_view.selected_roles[self.level] = self.values[0]
+        await interaction.response.edit_message(
+            content=self.setup_view.render_content(),
+            view=self.setup_view,
+        )
+
+
+class RoleSetupView(OwnerOnlyView):
+    def __init__(self, owner_id: int, guild: discord.Guild) -> None:
+        super().__init__(owner_id)
+        self.guild_id = guild.id
+        self.selected_roles = load_selected_roles(guild)
+
+        for row, level in enumerate(ROLE_LEVELS):
+            self.add_item(
+                SetupRoleSelect(
+                    self,
+                    level,
+                    self.selected_roles[level],
+                    row,
+                )
+            )
+
+    def render_content(self) -> str:
+        return build_role_setup_message(self.selected_roles)
+
+    @discord.ui.button(label="保存", style=discord.ButtonStyle.success, row=3)
+    async def save_roles(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        missing = [LEVEL_NAMES[level] for level in ROLE_LEVELS if self.selected_roles[level] is None]
+        if missing:
+            await interaction.response.send_message(
+                f"{', '.join(missing)}ロールを選択してください。",
+                ephemeral=True,
+            )
+            return
+
+        selected_roles = [self.selected_roles[level] for level in ROLE_LEVELS]
+        role_ids = [role.id for role in selected_roles if role is not None]
+        if len(set(role_ids)) != len(ROLE_LEVELS):
+            await interaction.response.send_message(
+                "3つとも別のロールを選択してください。",
+                ephemeral=True,
+            )
+            return
+
+        light_role = self.selected_roles["light"]
+        medium_role = self.selected_roles["medium"]
+        heavy_role = self.selected_roles["heavy"]
+        if light_role is None or medium_role is None or heavy_role is None:
+            await interaction.response.send_message("ロール選択が不完全です。もう一度選択してください。", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        refreshed, failed = await save_guild_role_settings(
+            guild.id,
+            light_role.id,
+            medium_role.id,
+            heavy_role.id,
+        )
+        notice = build_role_save_message(light_role, medium_role, heavy_role, refreshed, failed)
+        await interaction.edit_original_response(
+            content=build_setup_home_message(guild, notice=notice),
+            view=SetupHomeView(self.owner_id),
+        )
+
+    @discord.ui.button(label="戻る", style=discord.ButtonStyle.secondary, row=3)
+    async def back_to_home(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        await interaction.response.edit_message(
+            content=build_setup_home_message(guild),
+            view=SetupHomeView(self.owner_id),
+        )
+
+
+class DurationSetupModal(discord.ui.Modal, title="違反期間設定"):
+    def __init__(self, owner_id: int, guild: discord.Guild) -> None:
+        super().__init__()
+        self.owner_id = owner_id
+        self.guild_id = guild.id
+
+        settings = bot.get_guild_settings(guild.id)
+        self.light_days = discord.ui.TextInput(
+            label="軽度違反の日数",
+            default=str(settings["light_seconds"] // 86400) if settings is not None and settings["light_seconds"] > 0 else "",
+            placeholder="1〜3650",
+            min_length=1,
+            max_length=4,
+        )
+        self.medium_days = discord.ui.TextInput(
+            label="中度違反の日数",
+            default=str(settings["medium_seconds"] // 86400) if settings is not None and settings["medium_seconds"] > 0 else "",
+            placeholder="1〜3650",
+            min_length=1,
+            max_length=4,
+        )
+        self.heavy_days = discord.ui.TextInput(
+            label="重度違反の日数",
+            default=str(settings["heavy_seconds"] // 86400) if settings is not None and settings["heavy_seconds"] > 0 else "",
+            placeholder="1〜3650",
+            min_length=1,
+            max_length=4,
+        )
+
+        self.add_item(self.light_days)
+        self.add_item(self.medium_days)
+        self.add_item(self.heavy_days)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "この setup 画面はコマンド実行者のみ操作できます。",
+                ephemeral=True,
+            )
+            return
+
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        try:
+            light_days = parse_duration_days(self.light_days.value, "軽度")
+            medium_days = parse_duration_days(self.medium_days.value, "中度")
+            heavy_days = parse_duration_days(self.heavy_days.value, "重度")
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
+            return
+
+        save_guild_duration_settings(guild.id, light_days, medium_days, heavy_days)
+        notice = build_duration_save_message(light_days, medium_days, heavy_days)
+        await interaction.response.send_message(
+            build_setup_home_message(guild, notice=notice),
+            view=SetupHomeView(self.owner_id),
+            ephemeral=True,
+        )
+
+
+@bot.tree.command(name="setup", description="このサーバーの違反設定をまとめて行います")
+async def setup(interaction: discord.Interaction) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+        return
+
+    if not has_manage_guild(interaction):
+        await interaction.response.send_message("Manage Server 権限か管理者権限が必要です。", ephemeral=True)
+        return
+
+    await interaction.response.send_message(
+        build_setup_home_message(interaction.guild),
+        view=SetupHomeView(interaction.user.id),
+        ephemeral=True,
+    )
+
+
 @bot.tree.command(name="config_roles", description="このサーバーの違反ロールを設定します")
 @app_commands.describe(
     light="軽度違反ロール",
@@ -540,23 +951,16 @@ async def config_roles(
         await interaction.response.send_message("3つとも別のロールを指定してください。", ephemeral=True)
         return
 
-    guild_id = interaction.guild.id
-    previous_role_ids = role_ids_from_settings(bot.get_guild_settings(guild_id))
-
     await interaction.response.defer(ephemeral=True)
-
-    bot.upsert_guild_roles(guild_id, light.id, medium.id, heavy.id)
-    refreshed, failed = await bot.refresh_guild_violation_roles(
-        guild_id,
-        remove_role_ids=previous_role_ids,
+    refreshed, failed = await save_guild_role_settings(
+        interaction.guild.id,
+        light.id,
+        medium.id,
+        heavy.id,
     )
 
     await interaction.followup.send(
-        "このサーバーの違反ロールを保存しました。\n"
-        f"- 軽度: {light.mention}\n"
-        f"- 中度: {medium.mention}\n"
-        f"- 重度: {heavy.mention}\n"
-        f"- 既存違反者への再適用: {refreshed}件中 {failed}件失敗",
+        build_role_save_message(light, medium, heavy, refreshed, failed),
         ephemeral=True,
     )
 
@@ -581,19 +985,10 @@ async def config_durations(
         await interaction.response.send_message("Manage Server 権限か管理者権限が必要です。", ephemeral=True)
         return
 
-    bot.upsert_guild_durations(
-        interaction.guild.id,
-        days_to_seconds(light_days),
-        days_to_seconds(medium_days),
-        days_to_seconds(heavy_days),
-    )
+    save_guild_duration_settings(interaction.guild.id, light_days, medium_days, heavy_days)
 
     await interaction.response.send_message(
-        "このサーバーの違反期間を保存しました。\n"
-        f"- 軽度: {light_days}日\n"
-        f"- 中度: {medium_days}日\n"
-        f"- 重度: {heavy_days}日\n"
-        "既存違反者の現在の期限は変わりません。次回の降格以降から新しい期間が適用されます。",
+        build_duration_save_message(light_days, medium_days, heavy_days),
         ephemeral=True,
     )
 
@@ -608,24 +1003,13 @@ async def config_show(interaction: discord.Interaction) -> None:
     if settings is None:
         await interaction.response.send_message(
             "このサーバーにはまだ設定がありません。\n"
-            "先に /config_roles と /config_durations を実行してください。",
+            f"先に {SETUP_GUIDANCE}",
             ephemeral=True,
         )
         return
 
-    guild = interaction.guild
-    light_role = guild.get_role(settings["light_role_id"]) if settings["light_role_id"] else None
-    medium_role = guild.get_role(settings["medium_role_id"]) if settings["medium_role_id"] else None
-    heavy_role = guild.get_role(settings["heavy_role_id"]) if settings["heavy_role_id"] else None
-
     await interaction.response.send_message(
-        "現在の設定\n"
-        f"- 軽度ロール: {light_role.mention if light_role else '未設定'}\n"
-        f"- 中度ロール: {medium_role.mention if medium_role else '未設定'}\n"
-        f"- 重度ロール: {heavy_role.mention if heavy_role else '未設定'}\n"
-        f"- 軽度期間: {settings['light_seconds'] // 86400}日\n"
-        f"- 中度期間: {settings['medium_seconds'] // 86400}日\n"
-        f"- 重度期間: {settings['heavy_seconds'] // 86400}日",
+        "現在の設定\n" + "\n".join(build_settings_summary_lines(interaction.guild)),
         ephemeral=True,
     )
 
@@ -656,7 +1040,7 @@ async def violation_set(
     if not settings_complete(settings):
         await interaction.response.send_message(
             "このサーバーの違反設定が未完了です。\n"
-            "先に /config_roles と /config_durations を実行してください。",
+            f"先に {SETUP_GUIDANCE}",
             ephemeral=True,
         )
         return
