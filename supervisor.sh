@@ -36,7 +36,6 @@ stop_bot() {
 }
 
 deploy_main() {
-  git fetch origin >> "$LOG_DIR/supervisor.log" 2>&1
   git checkout "$BRANCH" >> "$LOG_DIR/supervisor.log" 2>&1
   git reset --hard "$REMOTE_REF" >> "$LOG_DIR/supervisor.log" 2>&1
 }
@@ -66,10 +65,13 @@ while true; do
 
   if [ "$NEW_REMOTE" != "$LAST_SEEN" ]; then
     echo "[supervisor] detected update: $LAST_SEEN -> $NEW_REMOTE" >> "$LOG_DIR/supervisor.log"
-    stop_bot
-    deploy_main
-    start_bot
-    LAST_SEEN="$NEW_REMOTE"
+    if deploy_main; then
+      stop_bot
+      start_bot
+      LAST_SEEN="$NEW_REMOTE"
+    else
+      echo "[supervisor] deploy failed; keeping current bot running" >> "$LOG_DIR/supervisor.log"
+    fi
   else
     # Bot が落ちていたら再起動
     start_bot

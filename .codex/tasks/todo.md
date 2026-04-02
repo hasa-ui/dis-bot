@@ -1,5 +1,9 @@
 # TODO
 
+- [x] `runbot.sh` の自己更新挙動を維持する
+- [x] `supervisor.sh` で deploy 失敗時に既存 bot を止めないようにする
+- [x] `supervisor.sh` に実行権限を付ける
+- [x] 起動スクリプトの検証結果を追記する
 - [x] `/setup` の follow-up 操作でも権限再確認する
 - [x] `/setup` のロール保存前に選択ロールを再解決する
 - [x] 構文検証を実施し、結果を追記する
@@ -22,6 +26,9 @@
 
 ## Changes
 
+- `runbot.sh` に `git fetch` / `checkout main` / `reset --hard origin/main` を戻し、既存の直接起動フローでも自己更新されるようにした
+- `supervisor.sh` の `deploy_main()` から二重の `git fetch` を外し、更新検知後は deploy 成功時のみ bot を stop/start するようにした
+- `supervisor.sh` に実行権限を付け、直接起動できるようにした
 - `OwnerOnlyView.interaction_check()` で setup 実行者の一致に加えて `Manage Server` 権限も毎回再確認するようにした
 - `DurationSetupModal.on_submit()` でも保存前に `Manage Server` 権限を再確認するようにした
 - `RoleSetupView.save_roles()` で保存直前に選択ロールを `guild.get_role(id)` で再解決し、削除済みロールは保存せず選び直しを促すようにした
@@ -39,6 +46,9 @@
 
 ## Verification
 
+- 実施: `sh -n runbot.sh supervisor.sh` -> 成功
+- 実施: `stat -c '%A %n' supervisor.sh` -> `-rwxr-xr-x supervisor.sh`
+- 実施: `git diff --summary -- runbot.sh supervisor.sh` -> `supervisor.sh` が `100755` になったことを確認
 - 実施: `python -m py_compile bot.py` -> 成功
 - 実施: setup View/Modal の権限判定とロール再解決が保存前に走ることをコード上で確認
 - 実施: `DISCORD_TOKEN=dummy DB_PATH=/tmp/dis-bot-setup-test.db python - <<'PY' ... PY` -> `SetupHomeView` / `RoleSetupView` / `DurationSetupModal` の生成成功
