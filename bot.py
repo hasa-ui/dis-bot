@@ -81,6 +81,18 @@ def duration_from_settings(settings: sqlite3.Row, level: str) -> int:
     raise ValueError(f"Unknown level: {level}")
 
 
+def role_ids_from_settings(settings: Optional[sqlite3.Row]) -> set[int]:
+    if settings is None:
+        return set()
+
+    role_ids = set()
+    for key in ("light_role_id", "medium_role_id", "heavy_role_id"):
+        value = settings[key]
+        if value is not None:
+            role_ids.add(value)
+    return role_ids
+
+
 def settings_complete(settings: Optional[sqlite3.Row]) -> bool:
     if settings is None:
         return False
@@ -298,6 +310,7 @@ class ViolationBot(commands.Bot):
         level: Optional[str],
         *,
         reason: str,
+        remove_role_ids: Optional[set[int]] = None,
     ) -> None:
         guild = self.get_guild(guild_id)
         if guild is None:
@@ -310,13 +323,9 @@ class ViolationBot(commands.Bot):
             return
 
         settings = self.get_guild_settings(guild_id)
-        configured_role_ids = set()
-
-        if settings is not None:
-            for key in ("light_role_id", "medium_role_id", "heavy_role_id"):
-                value = settings[key]
-                if value is not None:
-                    configured_role_ids.add(value)
+        configured_role_ids = role_ids_from_settings(settings)
+        if remove_role_ids is not None:
+            configured_role_ids.update(remove_role_ids)
 
         new_roles = [r for r in member.roles if r.id not in configured_role_ids]
 
@@ -388,7 +397,12 @@ class ViolationBot(commands.Bot):
         except RuntimeError:
             logger.exception("Failed to update roles for user %s", user_id)
 
-    async def refresh_guild_violation_roles(self, guild_id: int) -> tuple[int, int]:
+    async def refresh_guild_violation_roles(
+        self,
+        guild_id: int,
+        *,
+        remove_role_ids: Optional[set[int]] = None,
+    ) -> tuple[int, int]:
         total = 0
         failed = 0
 
@@ -406,6 +420,7 @@ class ViolationBot(commands.Bot):
                     current["user_id"],
                     current["level"],
                     reason="Refreshed violation roles after config_roles",
+                    remove_role_ids=remove_role_ids,
                 )
             except discord.Forbidden:
                 failed += 1
@@ -525,10 +540,18 @@ async def config_roles(
         await interaction.response.send_message("3つとも別のロールを指定してください。", ephemeral=True)
         return
 
-    bot.upsert_guild_roles(interaction.guild.id, light.id, medium.id, heavy.id)
-    refreshed, failed = await bot.refresh_guild_violation_roles(interaction.guild.id)
+    guild_id = interaction.guild.id
+    previous_role_ids = role_ids_from_settings(bot.get_guild_settings(guild_id))
 
-    await interaction.response.send_message(
+    await interaction.response.defer(ephemeral=True)
+
+    bot.upsert_guild_roles(guild_id, light.id, medium.id, heavy.id)
+    refreshed, failed = await bot.refresh_guild_violation_roles(
+        guild_id,
+        remove_role_ids=previous_role_ids,
+    )
+
+    await interaction.followup.send(
         "このサーバーの違反ロールを保存しました。\n"
         f"- 軽度: {light.mention}\n"
         f"- 中度: {medium.mention}\n"
