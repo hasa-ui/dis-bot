@@ -3,6 +3,7 @@
 set -eu
 
 REPO="/data/data/com.termux/files/home/discord-bot"
+BOT_ENTRYPOINT="$REPO/bot.py"
 LOG_DIR="$REPO/logs"
 PID_FILE="$REPO/bot.pid"
 BRANCH="main"
@@ -39,7 +40,7 @@ start_bot() {
     (
       cd "$REPO" || exit 1
       . "$REPO/setenv.sh"
-      exec python "$REPO/bot.py"
+      exec python "$BOT_ENTRYPOINT"
     ) >> "$LOG_DIR/bot.log" 2>&1 &
   else
     "$REPO/runbot.sh" >> "$LOG_DIR/bot.log" 2>&1 &
