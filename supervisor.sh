@@ -91,6 +91,7 @@ while true; do
       LAST_SEEN="$NEW_REMOTE"
     else
       echo "[supervisor] deploy failed; keeping current bot running" >> "$LOG_DIR/supervisor.log"
+      start_bot current
     fi
   else
     # Bot が落ちていたら再起動

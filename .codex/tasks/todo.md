@@ -1,5 +1,7 @@
 # TODO
 
+- [x] deploy failure 中でも current checkout の crash recovery を維持する
+- [x] 起動スクリプトの検証結果を追記する
 - [x] `supervisor.sh` の初回 deploy 失敗時に current checkout で bot を起動する
 - [x] `supervisor.sh` の retry 状態を実際の checkout に合わせる
 - [x] 起動スクリプトの検証結果を追記する
@@ -39,6 +41,7 @@
 
 ## Changes
 
+- 更新ループの deploy failure 分岐でも `start_bot current` を呼ぶようにし、同じ remote revision を再試行中でも current checkout の bot が落ちていれば再起動できるようにした
 - `supervisor.sh` の `start_bot()` に `mode` 引数を追加し、初回 deploy failure 時だけ `runbot.sh` を経由せず current checkout の `bot.py` を直接起動できるようにした
 - 初回起動の deploy failure 時は `INITIAL_START_MODE="current"` に切り替え、失敗した自己更新を再実行せず current checkout で bot を起動するようにした
 - `supervisor.sh` の `LAST_SEEN` 初期値を `current_local_rev()` に変更し、初回 deploy に失敗した remote revision も次ループで再試行できるようにした
@@ -71,6 +74,7 @@
 ## Verification
 
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
+- 実施: 更新ループの deploy failure 分岐で `start_bot current` を呼ぶ構造になっており、retry 中でも bot が落ちていれば current checkout を再起動できることをコード上で確認
 - 実施: `start_bot()` が `mode=current` で `runbot.sh` を経由せず `bot.py` を直接起動する構造になっていることをコード上で確認
 - 実施: 初回起動時の `LAST_SEEN` が `current_local_rev()` になっており、initial deploy failure 後も同じ remote revision を再試行できることをコード上で確認
 - 実施: 初回起動ブロックが `if ! deploy_main; then ... fi` となり、失敗時でも `start_bot` へ進むことをコード上で確認
