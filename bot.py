@@ -260,6 +260,18 @@ class ViolationBot(commands.Bot):
         )
         return cur.fetchall()
 
+    def get_active_records_by_guild(self, guild_id: int):
+        cur = self.db.execute(
+            """
+            SELECT guild_id, user_id, level, expires_at, reason, updated_at
+            FROM sanctions
+            WHERE guild_id = ?
+            ORDER BY updated_at ASC
+            """,
+            (guild_id,),
+        )
+        return cur.fetchall()
+
     # ===== discord helpers =====
 
     async def fetch_member_if_needed(
@@ -376,6 +388,34 @@ class ViolationBot(commands.Bot):
         except RuntimeError:
             logger.exception("Failed to update roles for user %s", user_id)
 
+    async def refresh_guild_violation_roles(self, guild_id: int) -> tuple[int, int]:
+        total = 0
+        failed = 0
+
+        for row in self.get_active_records_by_guild(guild_id):
+            await self.reconcile_record(row)
+
+            current = self.get_record(guild_id, row["user_id"])
+            if current is None:
+                continue
+
+            total += 1
+            try:
+                await self.apply_violation_role(
+                    guild_id,
+                    current["user_id"],
+                    current["level"],
+                    reason="Refreshed violation roles after config_roles",
+                )
+            except discord.Forbidden:
+                failed += 1
+                logger.exception("Failed to refresh roles for user %s", current["user_id"])
+            except RuntimeError:
+                failed += 1
+                logger.exception("Failed to refresh roles for user %s", current["user_id"])
+
+        return total, failed
+
     # ===== background task =====
 
     @tasks.loop(minutes=1)
@@ -486,12 +526,14 @@ async def config_roles(
         return
 
     bot.upsert_guild_roles(interaction.guild.id, light.id, medium.id, heavy.id)
+    refreshed, failed = await bot.refresh_guild_violation_roles(interaction.guild.id)
 
     await interaction.response.send_message(
         "このサーバーの違反ロールを保存しました。\n"
         f"- 軽度: {light.mention}\n"
         f"- 中度: {medium.mention}\n"
-        f"- 重度: {heavy.mention}",
+        f"- 重度: {heavy.mention}\n"
+        f"- 既存違反者への再適用: {refreshed}件中 {failed}件失敗",
         ephemeral=True,
     )
 
@@ -527,7 +569,8 @@ async def config_durations(
         "このサーバーの違反期間を保存しました。\n"
         f"- 軽度: {light_days}日\n"
         f"- 中度: {medium_days}日\n"
-        f"- 重度: {heavy_days}日",
+        f"- 重度: {heavy_days}日\n"
+        "既存違反者の現在の期限は変わりません。次回の降格以降から新しい期間が適用されます。",
         ephemeral=True,
     )
 
@@ -735,4 +778,3 @@ async def on_app_command_error(
 
 if __name__ == "__main__":
     bot.run(TOKEN)
-
