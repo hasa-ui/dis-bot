@@ -1,5 +1,8 @@
 # TODO
 
+- [x] `runbot.sh` が自己更新失敗時に即終了するようにする
+- [x] `supervisor.sh` の `deploy_main` が途中失敗を成功扱いしないようにする
+- [x] 起動スクリプトの検証結果を追記する
 - [x] `runbot.sh` の自己更新挙動を維持する
 - [x] `supervisor.sh` で deploy 失敗時に既存 bot を止めないようにする
 - [x] `supervisor.sh` に実行権限を付ける
@@ -26,6 +29,8 @@
 
 ## Changes
 
+- `runbot.sh` に `set -eu` を追加し、自己更新の `git` コマンドが失敗したら stale な bot を起動せず即終了するようにした
+- `supervisor.sh` の `deploy_main()` で各 `git` コマンドを `|| return 1` 付きにし、`if deploy_main; then ...` でも途中失敗を成功扱いしないようにした
 - `runbot.sh` に `git fetch` / `checkout main` / `reset --hard origin/main` を戻し、既存の直接起動フローでも自己更新されるようにした
 - `supervisor.sh` の `deploy_main()` から二重の `git fetch` を外し、更新検知後は deploy 成功時のみ bot を stop/start するようにした
 - `supervisor.sh` に実行権限を付け、直接起動できるようにした
@@ -47,6 +52,8 @@
 ## Verification
 
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
+- 実施: `runbot.sh` が `set -eu` で始まり、更新失敗時に python 実行へ進まないことをコード上で確認
+- 実施: `deploy_main()` の各 `git` コマンドが `|| return 1` 付きになり、`if deploy_main` でも checkout 失敗を成功扱いしないことをコード上で確認
 - 実施: `stat -c '%A %n' supervisor.sh` -> `-rwxr-xr-x supervisor.sh`
 - 実施: `git diff --summary -- runbot.sh supervisor.sh` -> `supervisor.sh` が `100755` になったことを確認
 - 実施: `python -m py_compile bot.py` -> 成功

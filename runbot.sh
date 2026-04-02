@@ -1,5 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/sh
 
+set -eu
+
 cd /data/data/com.termux/files/home/discord-bot || exit 1
 
 git fetch origin
