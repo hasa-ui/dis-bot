@@ -27,6 +27,11 @@ start_bot() {
         echo "[supervisor] refusing current-mode start: checkout is not last known-good revision" >> "$LOG_DIR/supervisor.log"
         exit 1
       fi
+      current_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo detached)"
+      if [ "$current_branch" != "$BRANCH" ]; then
+        echo "[supervisor] refusing current-mode reset on branch $current_branch; automatic recovery is limited to $BRANCH" >> "$LOG_DIR/supervisor.log"
+        exit 1
+      fi
       git reset --hard "$LAST_SEEN" >> "$LOG_DIR/supervisor.log" 2>&1 || exit 1
       . "$REPO/setenv.sh"
       exec python "$REPO/bot.py"
