@@ -11,3 +11,5 @@
 - ただし `git checkout` は tracked 変更で失敗しても `git reset --hard origin/main` が自己回復できるため、checkout だけを即 fatal にしない
 - その自己回復は「現在ブランチが main の場合」に限定する。非 `main` ブランチで checkout failure を無視すると、`reset --hard origin/main` が別ブランチの作業を破壊する
 - supervisor の初回起動パスも更新ループと同じ失敗処理に揃える。`set -e` 下の top-level deploy failure を未処理のまま置くと、監視自体が止まる
+- deploy failure 後に current checkout で継続するなら、fallback 起動は `runbot.sh` を再利用せず update を伴わない直接起動へ切り替える
+- 監視ループの retry 判定に使う状態 (`LAST_SEEN`) は「最後に見た remote」ではなく「実際に動かしている checkout」に合わせる。失敗した revision を処理済み扱いにしない

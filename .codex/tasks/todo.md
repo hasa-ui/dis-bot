@@ -1,5 +1,8 @@
 # TODO
 
+- [x] `supervisor.sh` の初回 deploy 失敗時に current checkout で bot を起動する
+- [x] `supervisor.sh` の retry 状態を実際の checkout に合わせる
+- [x] 起動スクリプトの検証結果を追記する
 - [x] `supervisor.sh` の初回起動でも `deploy_main` 失敗を処理する
 - [x] 起動スクリプトの検証結果を追記する
 - [x] dirty な非 `main` ブランチでは `reset --hard origin/main` に進まないようにする
@@ -36,6 +39,9 @@
 
 ## Changes
 
+- `supervisor.sh` の `start_bot()` に `mode` 引数を追加し、初回 deploy failure 時だけ `runbot.sh` を経由せず current checkout の `bot.py` を直接起動できるようにした
+- 初回起動の deploy failure 時は `INITIAL_START_MODE="current"` に切り替え、失敗した自己更新を再実行せず current checkout で bot を起動するようにした
+- `supervisor.sh` の `LAST_SEEN` 初期値を `current_local_rev()` に変更し、初回 deploy に失敗した remote revision も次ループで再試行できるようにした
 - `supervisor.sh` の初回起動でも `deploy_main()` を `if ! ...; then` で包み、失敗時は `supervisor.log` に記録してから `start_bot` と監視ループへ進むようにした
 - `runbot.sh` で更新前のブランチ名を保持し、`git checkout main` が失敗した場合は現在ブランチが `main` のときだけ `reset --hard origin/main` へ進み、非 `main` なら停止するようにした
 - `supervisor.sh` の `deploy_main()` でも更新前ブランチを確認し、`checkout main` 失敗時は `main` 上のみ reset 続行、非 `main` なら deploy failure として bot を止めないようにした
@@ -65,6 +71,8 @@
 ## Verification
 
 - 実施: `sh -n runbot.sh supervisor.sh` -> 成功
+- 実施: `start_bot()` が `mode=current` で `runbot.sh` を経由せず `bot.py` を直接起動する構造になっていることをコード上で確認
+- 実施: 初回起動時の `LAST_SEEN` が `current_local_rev()` になっており、initial deploy failure 後も同じ remote revision を再試行できることをコード上で確認
 - 実施: 初回起動ブロックが `if ! deploy_main; then ... fi` となり、失敗時でも `start_bot` へ進むことをコード上で確認
 - 実施: 一時 repo で `main` 上の dirty 状態からは reset により回復できることを確認 (`main_case:reset_ok`)
 - 実施: `runbot.sh` / `supervisor.sh` ともに、checkout failure 時は事前のブランチ名が `main` のときだけ reset を許可し、非 `main` では abort/failure へ分岐することをコード上で確認

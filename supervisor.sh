@@ -14,13 +14,23 @@ mkdir -p "$LOG_DIR"
 cd "$REPO" || exit 1
 
 start_bot() {
+  mode="${1:-update}"
+
   if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     return
   fi
 
-  "$REPO/runbot.sh" >> "$LOG_DIR/bot.log" 2>&1 &
+  if [ "$mode" = "current" ]; then
+    (
+      cd "$REPO" || exit 1
+      . "$REPO/setenv.sh"
+      exec python "$REPO/bot.py"
+    ) >> "$LOG_DIR/bot.log" 2>&1 &
+  else
+    "$REPO/runbot.sh" >> "$LOG_DIR/bot.log" 2>&1 &
+  fi
   echo $! > "$PID_FILE"
-  echo "[supervisor] started bot pid=$(cat "$PID_FILE")" >> "$LOG_DIR/supervisor.log"
+  echo "[supervisor] started bot pid=$(cat "$PID_FILE") mode=$mode" >> "$LOG_DIR/supervisor.log"
 }
 
 stop_bot() {
@@ -55,15 +65,17 @@ current_local_rev() {
 }
 
 # 初回起動
+INITIAL_START_MODE="update"
 git fetch origin >> "$LOG_DIR/supervisor.log" 2>&1 || true
 if [ "$(current_local_rev 2>/dev/null || echo none)" != "$(current_remote_rev 2>/dev/null || echo none)" ]; then
   if ! deploy_main; then
     echo "[supervisor] initial deploy failed; continuing with current checkout" >> "$LOG_DIR/supervisor.log"
+    INITIAL_START_MODE="current"
   fi
 fi
-start_bot
+start_bot "$INITIAL_START_MODE"
 
-LAST_SEEN="$(current_remote_rev 2>/dev/null || echo none)"
+LAST_SEEN="$(current_local_rev 2>/dev/null || echo none)"
 
 while true; do
   sleep "$CHECK_INTERVAL"
