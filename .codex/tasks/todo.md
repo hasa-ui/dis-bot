@@ -1,5 +1,8 @@
 # TODO
 
+- [x] 段階数縮小時に丸め対象 record の期限を新段階に合わせて再計算する
+- [x] `status_set` の設定完了判定を実際の満了経路ベースへ修正する
+- [x] 検証結果と再発防止メモを追記する
 - [x] 固定3段の違反モデルを可変段階のステータスモデルへ置き換える
 - [x] 新DBテーブルと旧データ自動移行を実装する
 - [x] `/setup` を可変段階設定UIへ作り替える
@@ -62,6 +65,8 @@
 
 ## Changes
 
+- `bot.py` の `set_stage_count()` で段階数縮小時に上位 record の `stage_index` だけでなく `expires_at` も新しい最大段階の duration へ再計算するようにした
+- `bot.py` に `stage_path_is_ready()` を追加し、`status_set` の準備判定を「1..N 全段必須」から、選択段階の `next` / `clear` / `hold` で実際に到達する経路だけを見る方式へ変更した
 - `bot.py` の固定 `light/medium/heavy` 前提をやめ、`guild_status_settings` / `guild_status_stages` / `status_records` ベースの可変段階ステータスモデルへ置き換えた
 - `bot.py` の起動時マイグレーションで、旧 `guild_settings` / `sanctions` の 3 段違反データを新ステータス構造へ自動変換するようにした
 - `bot.py` の自動遷移を段階単位の `next` / `clear` / `hold` へ一般化し、最終満了後も同段階維持できるようにした
@@ -110,6 +115,10 @@
 
 ## Verification
 
+- 実施: `tmpdb=/tmp/dis-bot-fix-$$.db DISCORD_TOKEN=dummy DB_PATH=\"$tmpdb\" python ...` -> `clamp_ok`
+- 実施内容: 段階数を 5 から 3 へ減らしたとき、旧 stage 5 record が stage 3 へ丸められ、`expires_at` が新 stage 3 duration 基準へ再計算されることを確認
+- 実施: `tmpdb=/tmp/dis-bot-fix-path-$$.db DISCORD_TOKEN=dummy DB_PATH=\"$tmpdb\" python ...` -> `path_ok`
+- 実施内容: `stage 4 = hold`、`stage 1..3 = 未設定/clear` の構成で `stage_path_is_ready(config, 4)` は通り、未設定の stage 3 単体は通らないことを確認
 - 実施: `python -m py_compile bot.py` -> 成功
 - 実施: `DISCORD_TOKEN=dummy DB_PATH=/tmp/dis-bot-generic-smoke-$$.db python ...` のスモークで、旧3段設定の自動移行、4段化、段階保存、`hold` 設定、`SetupHomeView` / `StageSetupView` の生成成功を確認
 - 実施: `DISCORD_TOKEN=dummy DB_PATH=/tmp/dis-bot-generic-behavior-$$.db python ...` の振る舞い確認で、`hold` 満了後に `expires_at = NULL` へ変わることと、段階数縮小時に上位 record が新最大段階へ丸められることを確認

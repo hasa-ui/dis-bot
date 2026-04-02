@@ -169,6 +169,33 @@ def stages_ready_up_to(config: Optional[GuildStatusConfig], stage_index: int) ->
     return True
 
 
+def stage_path_is_ready(config: Optional[GuildStatusConfig], stage_index: int) -> bool:
+    if config is None:
+        return False
+    if not 1 <= stage_index <= config.stage_count:
+        return False
+
+    stage_map = build_stage_map(config)
+    current_index = stage_index
+    visited: set[int] = set()
+
+    while True:
+        if current_index in visited:
+            return False
+        visited.add(current_index)
+
+        stage = stage_map.get(current_index)
+        if not is_stage_ready(stage):
+            return False
+
+        if stage.on_expire_action in {ACTION_CLEAR, ACTION_HOLD}:
+            return True
+
+        current_index -= 1
+        if current_index < 1:
+            return False
+
+
 def format_role_setting(guild: discord.Guild, role_id: Optional[int]) -> str:
     if role_id is None:
         return "未設定"
@@ -686,13 +713,33 @@ class StatusBot(commands.Bot):
         self.ensure_stage_rows(guild_id, stage_count)
 
         if previous_count > stage_count:
+            config = self.get_status_config(guild_id)
+            target_stage = get_stage(config, stage_count) if config is not None else None
+            target_expires_at = None
+            if target_stage is not None and target_stage.duration_seconds > 0:
+                target_expires_at = now_ts() + target_stage.duration_seconds
+
             self.db.execute(
                 """
                 UPDATE status_records
-                SET stage_index = ?, updated_at = ?
+                SET
+                    stage_index = ?,
+                    expires_at = CASE
+                        WHEN expires_at IS NULL THEN NULL
+                        WHEN ? IS NULL THEN expires_at
+                        ELSE ?
+                    END,
+                    updated_at = ?
                 WHERE guild_id = ? AND stage_index > ?
                 """,
-                (stage_count, now_ts(), guild_id, stage_count),
+                (
+                    stage_count,
+                    target_expires_at,
+                    target_expires_at,
+                    now_ts(),
+                    guild_id,
+                    stage_count,
+                ),
             )
             self.db.execute(
                 "DELETE FROM guild_status_stages WHERE guild_id = ? AND stage_index > ?",
@@ -1525,9 +1572,9 @@ async def status_set(
         )
         return
 
-    if not stages_ready_up_to(config, stage):
+    if not stage_path_is_ready(config, stage):
         await interaction.response.send_message(
-            f"{default_stage_name(stage)} までの設定が未完了です。\n先に {SETUP_GUIDANCE}",
+            f"{default_stage_name(stage)} から到達するステータス設定が未完了です。\n先に {SETUP_GUIDANCE}",
             ephemeral=True,
         )
         return
