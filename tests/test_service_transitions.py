@@ -295,6 +295,8 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.success_count, 1)
         self.assertEqual(result.failure_count, 1)
         self.assertTrue(any("discord request failed" in line for line in result.detail_lines))
+        self.assertIsNone(self.store.get_status_record(1, 301))
+        self.assertEqual(self.store.get_status_history_for_member(1, 301), [])
 
     async def test_bulk_clear_status_tracks_http_exception_as_partial_failure(self) -> None:
         self.store.set_stage_count_value(1, 1)
@@ -326,8 +328,52 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.success_count, 1)
         self.assertEqual(result.failure_count, 1)
         self.assertTrue(any("member missing" in line for line in result.detail_lines))
-        self.assertIsNone(self.store.get_status_record(1, 400))
+        self.assertIsNotNone(self.store.get_status_record(1, 400))
+        self.assertEqual(self.store.get_status_history_for_member(1, 400), [])
         self.assertIsNone(self.store.get_status_record(1, 401))
+
+    async def test_assign_status_http_exception_does_not_persist_record(self) -> None:
+        self.store.set_stage_count_value(1, 1)
+        self.store.ensure_stage_rows(1, 1)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "警告", 11, days_to_seconds(1), ACTION_HOLD))
+        self.store.commit()
+
+        guild = FakeGuild(1, (11,), member_ids=(310,))
+        self.service = StatusService(FakeBot(guild), self.store)
+
+        with patch(
+            "status_bot.service_actions.apply_status_role",
+            new=AsyncMock(side_effect=discord.HTTPException(FakeHttpResponse(), "discord request failed")),
+        ):
+            with self.assertRaises(discord.HTTPException):
+                await self.service.assign_status(1, SimpleNamespace(id=310), 1, "reason", SimpleNamespace(id=77))
+
+        self.assertIsNone(self.store.get_status_record(1, 310))
+        self.assertEqual(self.store.get_status_history_for_member(1, 310), [])
+
+    async def test_clear_status_http_exception_keeps_record(self) -> None:
+        self.store.set_stage_count_value(1, 1)
+        self.store.ensure_stage_rows(1, 1)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "警告", 11, days_to_seconds(1), ACTION_HOLD))
+        self.store.upsert_status_record(1, 320, 1, now_ts() + 60, "keep me")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11,), member_ids=(320,))
+        self.service = StatusService(FakeBot(guild), self.store)
+
+        with patch(
+            "status_bot.service_actions.apply_status_role",
+            new=AsyncMock(
+                side_effect=discord.HTTPException(FakeHttpResponse(status=500), "discord request failed")
+            ),
+        ):
+            with self.assertRaises(discord.HTTPException):
+                await self.service.clear_status(1, FakeMember(320), "tester")
+
+        row = self.store.get_status_record(1, 320)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["stage_index"], 1)
+        self.assertEqual(self.store.get_status_history_for_member(1, 320), [])
 
     async def test_clear_status_records_manual_clear_history(self) -> None:
         self.store.set_stage_count_value(1, 2)

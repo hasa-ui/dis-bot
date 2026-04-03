@@ -435,6 +435,13 @@ async def assign_status(
 
     previous = context.store.get_status_record(guild_id, member.id)
     expires_at = now_ts() + current_stage.duration_seconds
+    await apply_status_role(
+        context,
+        guild_id,
+        member.id,
+        stage_index,
+        reason=f"Manual status set by {actor}",
+    )
     context.store.upsert_status_record(guild_id, member.id, stage_index, expires_at, reason)
     record_history(
         context,
@@ -448,13 +455,6 @@ async def assign_status(
         config=config,
     )
     context.store.commit()
-    await apply_status_role(
-        context,
-        guild_id,
-        member.id,
-        stage_index,
-        reason=f"Manual status set by {actor}",
-    )
     await send_status_notification(
         context,
         guild_id,
@@ -480,6 +480,13 @@ async def clear_status(
     config = context.store.get_status_config(guild_id)
     previous = context.store.get_status_record(guild_id, member.id)
     stale_stage_index = infer_stage_from_member_roles(config, member) if previous is None else None
+    await apply_status_role(
+        context,
+        guild_id,
+        member.id,
+        None,
+        reason=f"Manual status clear by {actor}",
+    )
     if previous is not None or stale_stage_index is not None:
         context.store.delete_status_record(guild_id, member.id)
         from_stage_index = previous["stage_index"] if previous is not None else stale_stage_index
@@ -496,14 +503,6 @@ async def clear_status(
             config=config,
         )
         context.store.commit()
-    await apply_status_role(
-        context,
-        guild_id,
-        member.id,
-        None,
-        reason=f"Manual status clear by {actor}",
-    )
-    if previous is not None or stale_stage_index is not None:
         await send_status_notification(
             context,
             guild_id,
