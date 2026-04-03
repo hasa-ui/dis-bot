@@ -7,6 +7,9 @@
 - [x] 一括操作として `/status_bulk_set` / `/status_bulk_clear` を追加する
 - [x] 添付テキストの解析、重複除外、権限除外、部分失敗集計を実装する
 - [x] 一括操作の回帰テストと整形テストを追加し、構文検証と `unittest` を再実施する
+- [x] 一括操作で member lookup 失敗が全体中断しないようにする
+- [x] 一括操作で Discord edit 例外を対象単位の失敗として扱う
+- [x] UTF-8 BOM 付き添付でも先頭行を正しく解釈できるようにする
 
 - [x] `/status_list` の一覧取得を非破壊化し、公開のまま自動遷移を強制できないようにする
 - [x] stale role cleanup 時の `manual_clear` 履歴を復元する
@@ -346,5 +349,7 @@
 - 実施: `python -m unittest discover -s tests` -> 56 tests, OK
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 61 tests, OK
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 65 tests, OK
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため

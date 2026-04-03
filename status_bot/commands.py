@@ -51,7 +51,7 @@ async def _resolve_bulk_targets(
         raise ValueError(f"添付ファイルの読み込みに失敗しました: {exc}") from exc
 
     try:
-        content = raw.decode("utf-8")
+        content = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValueError("添付ファイルは UTF-8 テキストである必要があります。") from exc
 
@@ -76,7 +76,14 @@ async def _resolve_bulk_targets(
             continue
         seen_ids.add(user_id)
 
-        member = await bot.service.fetch_member_if_needed(guild.id, user_id)
+        try:
+            member = await bot.service.fetch_member_if_needed(guild.id, user_id)
+        except (discord.DiscordException, RuntimeError) as exc:
+            skipped_lines.append(
+                f"- {line_no}行目: <@{user_id}> の取得に失敗しました "
+                f"({str(exc) or exc.__class__.__name__})。"
+            )
+            continue
         if member is None:
             skipped_lines.append(f"- {line_no}行目: <@{user_id}> はこのサーバーで見つかりませんでした。")
             continue

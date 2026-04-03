@@ -537,6 +537,12 @@ async def bulk_assign_status(
             failure_count += 1
             detail_lines.append(f"- {member.mention}: 失敗 (権限不足)")
             logger.warning("Failed to bulk-assign status for user %s", member.id)
+        except discord.HTTPException as exc:
+            failure_count += 1
+            detail_lines.append(
+                f"- {member.mention}: 失敗 ({shorten_reason(str(exc) or exc.__class__.__name__, 80)})"
+            )
+            logger.warning("Failed to bulk-assign status for user %s", member.id)
         except RuntimeError as exc:
             failure_count += 1
             detail_lines.append(f"- {member.mention}: 失敗 ({shorten_reason(str(exc), 80)})")
@@ -575,6 +581,12 @@ async def bulk_clear_status(
         except discord.Forbidden:
             failure_count += 1
             detail_lines.append(f"- {member.mention}: 失敗 (権限不足)")
+            logger.warning("Failed to bulk-clear status for user %s", member.id)
+        except discord.HTTPException as exc:
+            failure_count += 1
+            detail_lines.append(
+                f"- {member.mention}: 失敗 ({shorten_reason(str(exc) or exc.__class__.__name__, 80)})"
+            )
             logger.warning("Failed to bulk-clear status for user %s", member.id)
         except RuntimeError as exc:
             failure_count += 1

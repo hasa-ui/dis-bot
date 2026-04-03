@@ -2,6 +2,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import discord
+
 from status_bot.config import ACTION_HOLD
 from status_bot.models import BulkOperationResult, GuildStatusNotificationConfig, StatusHistoryEntry, StatusStageConfig
 
@@ -74,6 +76,14 @@ class FakeAttachment:
 
     async def read(self) -> bytes:
         return self._content.encode("utf-8")
+
+
+class FakeBomAttachment:
+    def __init__(self, content: str) -> None:
+        self._content = content
+
+    async def read(self) -> bytes:
+        return ("\ufeff" + self._content).encode("utf-8")
 
 
 class FakeGuild:
@@ -329,6 +339,83 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         bot.service.bulk_clear_status.assert_called_once()
         called_members = bot.service.bulk_clear_status.call_args.args[1]
         self.assertEqual([member.id for member in called_members], [100])
+
+    async def test_status_bulk_set_accepts_utf8_bom(self) -> None:
+        bot = FakeBot()
+        bot.store.get_status_config = Mock(
+            return_value=SimpleNamespace(
+                guild_id=1,
+                stage_count=1,
+                stages=[StatusStageConfig(1, "", 11, 86400, ACTION_HOLD)],
+            )
+        )
+        bot.service.fetch_member_if_needed = AsyncMock(
+            return_value=SimpleNamespace(id=100, mention="<@100>")
+        )
+        bot.service.bulk_assign_status = AsyncMock(
+            return_value=BulkOperationResult(
+                processed_count=1,
+                success_count=1,
+                failure_count=0,
+                detail_lines=[],
+            )
+        )
+        register_commands(bot)
+        command = bot.tree.commands["status_bulk_set"]
+
+        interaction = FakeInteraction(
+            guild=FakeGuild(1),
+            user=SimpleNamespace(id=10, guild_permissions=SimpleNamespace(manage_roles=True)),
+        )
+
+        with patch("status_bot.commands.has_manage_roles", return_value=True):
+            with patch("status_bot.commands.can_manage_target", return_value=(True, "")):
+                await command(interaction, FakeBomAttachment("100\n"), 1, "reason")
+
+        bot.service.bulk_assign_status.assert_called_once()
+        called_members = bot.service.bulk_assign_status.call_args.args[1]
+        self.assertEqual([member.id for member in called_members], [100])
+
+    async def test_status_bulk_set_skips_lookup_failure_per_line(self) -> None:
+        bot = FakeBot()
+        bot.store.get_status_config = Mock(
+            return_value=SimpleNamespace(
+                guild_id=1,
+                stage_count=1,
+                stages=[StatusStageConfig(1, "", 11, 86400, ACTION_HOLD)],
+            )
+        )
+        bot.service.fetch_member_if_needed = AsyncMock(
+            side_effect=[
+                discord.DiscordException("lookup failed"),
+                SimpleNamespace(id=200, mention="<@200>"),
+            ]
+        )
+        bot.service.bulk_assign_status = AsyncMock(
+            return_value=BulkOperationResult(
+                processed_count=1,
+                success_count=1,
+                failure_count=0,
+                detail_lines=[],
+            )
+        )
+        register_commands(bot)
+        command = bot.tree.commands["status_bulk_set"]
+
+        interaction = FakeInteraction(
+            guild=FakeGuild(1),
+            user=SimpleNamespace(id=10, guild_permissions=SimpleNamespace(manage_roles=True)),
+        )
+
+        with patch("status_bot.commands.has_manage_roles", return_value=True):
+            with patch("status_bot.commands.can_manage_target", return_value=(True, "")):
+                await command(interaction, FakeAttachment("100\n200\n"), 1, "reason")
+
+        content = interaction.edits[0][0]
+        self.assertIn("取得に失敗しました", content)
+        bot.service.bulk_assign_status.assert_called_once()
+        called_members = bot.service.bulk_assign_status.call_args.args[1]
+        self.assertEqual([member.id for member in called_members], [200])
 
     async def test_status_notify_config_disable_all_rejects_other_updates(self) -> None:
         bot = FakeBot()
