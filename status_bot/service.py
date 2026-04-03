@@ -22,6 +22,96 @@ class StatusService:
         self.bot = bot
         self.store = store
 
+    def _predict_reconciled_record(
+        self,
+        config: GuildStatusConfig,
+        row,
+        *,
+        current_ts: Optional[int] = None,
+        projected_stage_index: Optional[int] = None,
+        projected_expires_at: Optional[int] = None,
+    ) -> Optional[dict[str, object]]:
+        stage_index = projected_stage_index if projected_stage_index is not None else row["stage_index"]
+        expires_at = projected_expires_at if projected_expires_at is not None else row["expires_at"]
+        reason = row["reason"]
+
+        if expires_at is None:
+            return {
+                "stage_index": stage_index,
+                "expires_at": None,
+                "reason": reason,
+            }
+
+        now_value = now_ts() if current_ts is None else current_ts
+        while expires_at is not None and expires_at <= now_value:
+            current_stage = get_stage(config, stage_index)
+            if not is_stage_ready(current_stage):
+                return {
+                    "stage_index": stage_index,
+                    "expires_at": expires_at,
+                    "reason": reason,
+                }
+
+            if current_stage.on_expire_action == ACTION_CLEAR:
+                return None
+
+            if current_stage.on_expire_action == ACTION_HOLD:
+                return {
+                    "stage_index": stage_index,
+                    "expires_at": None,
+                    "reason": reason,
+                }
+
+            next_stage = get_stage(config, stage_index - 1)
+            if not is_stage_ready(next_stage):
+                return {
+                    "stage_index": stage_index,
+                    "expires_at": expires_at,
+                    "reason": reason,
+                }
+
+            stage_index -= 1
+            expires_at = expires_at + next_stage.duration_seconds
+
+        return {
+            "stage_index": stage_index,
+            "expires_at": expires_at,
+            "reason": reason,
+        }
+
+    def _count_projected_reapply_records(
+        self,
+        guild_id: int,
+        config: GuildStatusConfig,
+        *,
+        clamp_stage_index: Optional[int] = None,
+    ) -> int:
+        current_ts = now_ts()
+        count = 0
+        target_stage = get_stage(config, clamp_stage_index) if clamp_stage_index is not None else None
+        target_expires_at = None
+        if target_stage is not None and target_stage.duration_seconds > 0:
+            target_expires_at = current_ts + target_stage.duration_seconds
+
+        for row in self.store.get_active_records_by_guild(guild_id):
+            projected_stage_index = row["stage_index"]
+            projected_expires_at = row["expires_at"]
+            if clamp_stage_index is not None and projected_stage_index > clamp_stage_index:
+                projected_stage_index = clamp_stage_index
+                if projected_expires_at is not None and target_expires_at is not None:
+                    projected_expires_at = target_expires_at
+
+            projected = self._predict_reconciled_record(
+                config,
+                row,
+                current_ts=current_ts,
+                projected_stage_index=projected_stage_index,
+                projected_expires_at=projected_expires_at,
+            )
+            if projected is not None:
+                count += 1
+        return count
+
     def _count_missing_roles(self, guild: discord.Guild, config: GuildStatusConfig) -> int:
         return sum(
             1
@@ -77,7 +167,11 @@ class StatusService:
 
         projected = self._build_stage_count_preview_config(guild.id, previous, stage_count)
         return SetupPreviewSummary(
-            reapply_count=self.store.count_active_records_by_guild(guild.id),
+            reapply_count=self._count_projected_reapply_records(
+                guild.id,
+                projected,
+                clamp_stage_index=stage_count if previous is not None and stage_count < previous.stage_count else None,
+            ),
             clamp_count=clamp_count,
             missing_role_count=self._count_missing_roles(guild, projected),
         )
@@ -101,7 +195,7 @@ class StatusService:
 
         projected = self._build_stage_preview_config(config, stage)
         return SetupPreviewSummary(
-            reapply_count=self.store.count_active_records_by_guild(guild.id),
+            reapply_count=self._count_projected_reapply_records(guild.id, projected),
             clamp_count=0,
             missing_role_count=self._count_missing_roles(guild, projected),
         )

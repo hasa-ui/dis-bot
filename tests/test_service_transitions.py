@@ -148,6 +148,33 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
                 StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT),
             )
 
+    async def test_preview_stage_count_settings_excludes_records_cleared_by_reconcile(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 10, 1, now_ts() - 5, "expired")
+        self.store.upsert_status_record(1, 20, 2, now_ts() + 60, "active")
+        self.store.commit()
+
+        summary = self.service.preview_stage_count_settings(FakeGuild(1, (11, 22)), 2)
+        self.assertEqual(summary.reapply_count, 1)
+
+    async def test_preview_stage_settings_excludes_records_cleared_by_reconcile(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 10, 1, now_ts() - 5, "expired")
+        self.store.upsert_status_record(1, 20, 2, now_ts() + 60, "active")
+        self.store.commit()
+
+        summary = self.service.preview_stage_settings(
+            FakeGuild(1, (11, 22)),
+            StatusStageConfig(2, "更新", 22, days_to_seconds(3), ACTION_NEXT),
+        )
+        self.assertEqual(summary.reapply_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

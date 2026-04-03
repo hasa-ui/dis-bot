@@ -1,5 +1,8 @@
 # TODO
 
+- [x] `/setup` の stale draft が別段階へ保存されないよう、段階数変更時の復元ガードを追加する
+- [x] `/setup` preview の再適用件数を raw row 数ではなく reconcile 後件数へ合わせる
+- [x] 上記 2 件の回帰テストと lessons を追記し、構文検証と `unittest` を再実施する
 - [x] `/setup` の保存前プレビュー向け集計モデルと service helper を追加する
 - [x] `/setup` の段階数保存・段階保存を確認付きプレビュー画面経由へ変更する
 - [x] プレビュー文言と回帰テストを追加し、構文検証と `unittest` 結果を追記する
@@ -79,6 +82,7 @@
 - `.codex/tasks` ディレクトリが存在しなかったため新規作成した
 - 今回の `タスクリスト.md` 作成では未解決事項は残っていない
 - 今回の `/setup` 保存前プレビュー実装では未解決事項は残っていない
+- 今回のレビュー指摘 2 件は修正済みで、追加の未解決事項は残っていない
 
 ## Changes
 
@@ -148,6 +152,11 @@
 - `status_bot/views.py` では編集中のロール保持を `discord.Role` オブジェクトではなく `selected_role_id` 基準へ切り替え、削除済みロールを保存前に再解決する形へそろえた
 - `status_bot/formatters.py` に段階数変更プレビュー文面、段階保存プレビュー文面、共通の件数サマリー文言を追加した
 - `tests/test_service_transitions.py` と `tests/test_formatters.py` に preview helper と preview message の回帰テストを追加し、`unittest` 件数を 13 件へ増やした
+- `status_bot/views.py` の `StageSetupView` で、編集中 draft の段階番号が現在の最大段階を超えていた場合はその下書きを別段階へ流用せず、現在保存済みの段階設定へ戻すようにした
+- `status_bot/service.py` の preview 件数算出を、保存時と同じ reconcile 後の残存 record 数ベースへ変更し、期限切れで `clear` される row を事前件数から除外するようにした
+- `tests/test_views.py` を追加し、段階数縮小後に stale draft が別段階へ化けないことを回帰テスト化した
+- `tests/test_service_transitions.py` に overdue record が preview 件数へ過大計上されないことの回帰テストを追加し、`unittest` 件数を 16 件へ増やした
+- `.codex/tasks/lessons.md` に、stale draft の復元条件と preview 件数を reconcile 後基準へ合わせる再発防止メモを追記した
 
 ## Verification
 
@@ -155,6 +164,8 @@
 - 実施: `sed -n '1,220p' status_bot/views.py` / `sed -n '220,420p' status_bot/views.py` / `sed -n '1,260p' status_bot/formatters.py` / `rg -n "save_stage_count_settings|save_stage_settings|refresh_guild_status_roles|count_records_above_stage|clamp_records_to_stage|build_.*message" status_bot` -> `/setup` の現行保存フローとプレビュー導入箇所を確認
 - 実施: `sed -n '1,220p' status_bot/models.py` / `sed -n '1,220p' status_bot/validation.py` / `sed -n '1,260p' tests/test_formatters.py` / `sed -n '1,320p' tests/test_service_transitions.py` -> 追加すべき内部モデルと既存テストの足場を確認
 - 実施: `rg -n "selected_role\\b|selected_role_id|preview_stage_|StageCountPreviewView|StageSavePreviewView|build_stage_count_preview_message|build_stage_save_preview_message" status_bot/views.py status_bot/service.py status_bot/formatters.py tests` -> 参照崩れなく preview 導線が追加されたことを確認
+- 実施: `sed -n '1,180p' status_bot/service.py` / `sed -n '360,470p' status_bot/views.py` / `sed -n '1,240p' tests/test_service_transitions.py` -> レビュー指摘箇所の現状実装と既存テストを確認
+- 実施: `rg -n "_count_projected_reapply_records|_predict_reconciled_record|draft_stage.stage_index != self.stage_index|test_stage_setup_view_discards_stale_draft|excludes_records_cleared_by_reconcile" status_bot tests` -> 2 件の修正ロジックと回帰テストが入ったことを確認
 - 実施: `git status --short` -> 編集前 worktree が clean であることを確認
 - 実施: `sed -n '1,220p' ロードマップ.md` / `sed -n '1,220p' AGENTS.md` -> `タスクリスト.md` に反映すべき優先軸、既存 I/F、検証方針、制約を再確認
 - 実施: `find . -maxdepth 1 -type f | sort` / `rg -n "setup|status_config|status_set|status_clear|status_view|hold|stage_count" status_bot AGENTS.md tests` -> 現行機能と公開 I/F の根拠を確認
@@ -205,5 +216,7 @@
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 13 tests, OK
 - 実施: `git diff --stat` -> 変更が `.codex/tasks/todo.md`、`status_bot/` の setup 周辺、関連テストに限定されていることを確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 16 tests, OK
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため

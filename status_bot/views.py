@@ -398,6 +398,13 @@ class StageSetupView(OwnerOnlyView):
         self._persisted_config = config
         persisted_stage = get_stage(config, self.stage_index) or default_stage_config(self.stage_index)
         working_stage = draft_stage or persisted_stage
+        if draft_stage is not None and draft_stage.stage_index != self.stage_index:
+            working_stage = persisted_stage
+            changed_notice = (
+                f"段階数が変更されたため、編集中だった {default_stage_name(draft_stage.stage_index)} の"
+                "下書きは復元せず、現在の設定を表示しています。"
+            )
+            self.notice = changed_notice if notice is None else f"{notice}\n{changed_notice}"
 
         self.label_value = working_stage.label
         self.duration_days = seconds_to_days(working_stage.duration_seconds)
