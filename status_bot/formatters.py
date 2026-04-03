@@ -4,7 +4,7 @@ from typing import Optional
 import discord
 
 from .config import ACTION_HOLD, ACTION_LABELS, ACTION_CLEAR, SETUP_GUIDANCE, VALID_EXPIRE_ACTIONS
-from .models import GuildStatusConfig, StatusStageConfig
+from .models import GuildStatusConfig, SetupPreviewSummary, StatusStageConfig
 from .validation import (
     config_complete,
     default_stage_name,
@@ -163,6 +163,46 @@ def build_stage_save_message(stage: StatusStageConfig, refreshed: int, failed: i
     )
 
 
+def build_preview_summary_lines(summary: SetupPreviewSummary) -> list[str]:
+    return [
+        f"- 再適用対象: {summary.reapply_count}件",
+        f"- 丸め対象: {summary.clamp_count}件",
+        f"- 見つからないロール: {summary.missing_role_count}件",
+    ]
+
+
+def build_stage_count_preview_message(
+    current_count: Optional[int],
+    next_count: int,
+    summary: SetupPreviewSummary,
+) -> str:
+    lines = [
+        "段階数変更プレビュー",
+        f"- 現在: {'未設定' if current_count is None else f'{current_count}段階'}",
+        f"- 保存後: {next_count}段階",
+    ]
+    lines.extend(build_preview_summary_lines(summary))
+    lines.append("この内容で保存する場合は確認ボタンを押してください。")
+    return "\n".join(lines)
+
+
+def build_stage_save_preview_message(
+    guild: discord.Guild,
+    persisted_stage: StatusStageConfig,
+    draft_stage: StatusStageConfig,
+    config: GuildStatusConfig,
+    summary: SetupPreviewSummary,
+) -> str:
+    lines = [f"{stage_display_name(draft_stage)} の保存前プレビュー"]
+    lines.append(f"- 現在のロール: {format_role_setting(guild, persisted_stage.role_id)}")
+    lines.append(f"- 保存後のロール: {format_role_setting(guild, draft_stage.role_id)}")
+    lines.append(f"- 保存後の期間: {format_duration_setting(draft_stage.duration_seconds)}")
+    lines.append(f"- 保存後の満了時: {describe_stage_expire_action(draft_stage, config)}")
+    lines.extend(build_preview_summary_lines(summary))
+    lines.append("この内容で保存する場合は確認ボタンを押してください。")
+    return "\n".join(lines)
+
+
 def build_stage_editor_message(
     guild: discord.Guild,
     config: GuildStatusConfig,
@@ -180,7 +220,7 @@ def build_stage_editor_message(
         lines.append("")
 
     lines.append(f"- 表示名: {stage_display_name(stage)}")
-    lines.append(f"- ロール: {selected_role.mention if selected_role is not None else '未設定'}")
+    lines.append(f"- ロール: {format_role_setting(guild, stage.role_id)}")
     lines.append(f"- 期間: {duration_days}日")
 
     draft_stage = StatusStageConfig(

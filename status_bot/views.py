@@ -5,7 +5,9 @@ import discord
 from .config import ACTION_CLEAR, ACTION_HOLD, ACTION_LABELS, ACTION_NEXT, DEFAULT_STAGE_COUNT, MAX_STAGE_COUNT
 from .formatters import (
     build_setup_home_message,
+    build_stage_count_preview_message,
     build_stage_editor_message,
+    build_stage_save_preview_message,
     build_stage_save_message,
     build_status_count_save_message,
 )
@@ -98,17 +100,21 @@ class StageCountModal(discord.ui.Modal, title="段階数設定"):
 
         await interaction.response.defer()
         try:
-            refreshed, failed = await self.bot.service.save_stage_count_settings(guild.id, stage_count)
+            preview = self.bot.service.preview_stage_count_settings(guild, stage_count)
         except ValueError as e:
             await interaction.followup.send(str(e), ephemeral=True)
             return
 
-        new_view = SetupHomeView(self.bot, self.owner_id)
-        content = build_setup_home_message(
-            guild,
-            self.bot.store.get_status_config(guild.id),
-            notice=build_status_count_save_message(stage_count, refreshed, failed),
+        current = self.bot.store.get_status_config(guild.id)
+        new_view = StageCountPreviewView(
+            self.bot,
+            self.owner_id,
+            guild.id,
+            current.stage_count if current is not None else None,
+            stage_count,
+            preview,
         )
+        content = new_view.render_content()
         if self.home_view.message is not None:
             await self.home_view.message.edit(content=content, view=new_view)
             new_view.message = self.home_view.message
@@ -169,6 +175,87 @@ class SetupHomeView(OwnerOnlyView):
         await new_view.bind_message(interaction)
 
 
+class StageCountPreviewView(OwnerOnlyView):
+    def __init__(
+        self,
+        bot: "StatusBot",
+        owner_id: int,
+        guild_id: int,
+        current_count: Optional[int],
+        next_count: int,
+        summary,
+    ) -> None:
+        super().__init__(bot, owner_id)
+        self.guild_id = guild_id
+        self.current_count = current_count
+        self.next_count = next_count
+        self.summary = summary
+
+    def render_content(self) -> str:
+        return build_stage_count_preview_message(
+            self.current_count,
+            self.next_count,
+            self.summary,
+        )
+
+    @discord.ui.button(label="この内容で保存", style=discord.ButtonStyle.success)
+    async def confirm_save(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        try:
+            self.bot.service.preview_stage_count_settings(guild, self.next_count)
+            refreshed, failed = await self.bot.service.save_stage_count_settings(guild.id, self.next_count)
+        except ValueError as e:
+            new_view = SetupHomeView(self.bot, self.owner_id)
+            await interaction.edit_original_response(
+                content=build_setup_home_message(
+                    guild,
+                    self.bot.store.get_status_config(guild.id),
+                    notice=str(e),
+                ),
+                view=new_view,
+            )
+            new_view.message = self.message
+            return
+
+        new_view = SetupHomeView(self.bot, self.owner_id)
+        await interaction.edit_original_response(
+            content=build_setup_home_message(
+                guild,
+                self.bot.store.get_status_config(guild.id),
+                notice=build_status_count_save_message(self.next_count, refreshed, failed),
+            ),
+            view=new_view,
+        )
+        new_view.message = self.message
+
+    @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.secondary)
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        new_view = SetupHomeView(self.bot, self.owner_id)
+        await interaction.response.edit_message(
+            content=build_setup_home_message(guild, self.bot.store.get_status_config(guild.id)),
+            view=new_view,
+        )
+        await new_view.bind_message(interaction)
+
+
 class StageActionSelect(discord.ui.Select):
     def __init__(self, stage_view: "StageSetupView") -> None:
         options = []
@@ -209,7 +296,7 @@ class StageActionSelect(discord.ui.Select):
 
 class StageRoleSelect(discord.ui.RoleSelect):
     def __init__(self, stage_view: "StageSetupView") -> None:
-        defaults = [stage_view.selected_role] if stage_view.selected_role is not None else []
+        defaults = [stage_view.resolve_selected_role()] if stage_view.resolve_selected_role() is not None else []
         super().__init__(
             placeholder=f"{default_stage_name(stage_view.stage_index)}のロールを選択",
             min_values=1,
@@ -220,7 +307,7 @@ class StageRoleSelect(discord.ui.RoleSelect):
         self.stage_view = stage_view
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        self.stage_view.selected_role = self.values[0]
+        self.stage_view.selected_role_id = self.values[0].id
         self.stage_view.notice = None
         await interaction.response.edit_message(
             content=self.stage_view.render_content(),
@@ -297,6 +384,7 @@ class StageSetupView(OwnerOnlyView):
         stage_index: int,
         *,
         notice: Optional[str] = None,
+        draft_stage: Optional[StatusStageConfig] = None,
     ) -> None:
         super().__init__(bot, owner_id)
         self.guild_id = guild.id
@@ -309,26 +397,38 @@ class StageSetupView(OwnerOnlyView):
         self.notice = notice
         self._persisted_config = config
         persisted_stage = get_stage(config, self.stage_index) or default_stage_config(self.stage_index)
+        working_stage = draft_stage or persisted_stage
+        if draft_stage is not None and draft_stage.stage_index != self.stage_index:
+            working_stage = persisted_stage
+            changed_notice = (
+                f"段階数が変更されたため、編集中だった {default_stage_name(draft_stage.stage_index)} の"
+                "下書きは復元せず、現在の設定を表示しています。"
+            )
+            self.notice = changed_notice if notice is None else f"{notice}\n{changed_notice}"
 
-        self.label_value = persisted_stage.label
-        self.duration_days = seconds_to_days(persisted_stage.duration_seconds)
+        self.label_value = working_stage.label
+        self.duration_days = seconds_to_days(working_stage.duration_seconds)
         self.selected_action = (
             ACTION_CLEAR
-            if self.stage_index == 1 and persisted_stage.on_expire_action == ACTION_NEXT
-            else persisted_stage.on_expire_action
+            if self.stage_index == 1 and working_stage.on_expire_action == ACTION_NEXT
+            else working_stage.on_expire_action
         )
-        self.selected_role = (
-            guild.get_role(persisted_stage.role_id) if persisted_stage.role_id is not None else None
-        )
+        self.selected_role_id = working_stage.role_id
 
         self.add_item(StageRoleSelect(self))
         self.add_item(StageActionSelect(self))
+
+    def resolve_selected_role(self) -> Optional[discord.Role]:
+        guild = self.bot.get_guild(self.guild_id)
+        if guild is None or self.selected_role_id is None:
+            return None
+        return guild.get_role(self.selected_role_id)
 
     def current_stage_config(self) -> StatusStageConfig:
         return StatusStageConfig(
             stage_index=self.stage_index,
             label=self.label_value,
-            role_id=self.selected_role.id if self.selected_role is not None else None,
+            role_id=self.selected_role_id,
             duration_seconds=days_to_seconds(self.duration_days),
             on_expire_action=self.selected_action,
         )
@@ -341,7 +441,7 @@ class StageSetupView(OwnerOnlyView):
             guild,
             self._persisted_config,
             self.current_stage_config(),
-            selected_role=self.selected_role,
+            selected_role=self.resolve_selected_role(),
             duration_days=self.duration_days,
             selected_action=self.selected_action,
             notice=self.notice,
@@ -368,23 +468,22 @@ class StageSetupView(OwnerOnlyView):
             await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
             return
         await interaction.response.defer()
+        draft_stage = self.current_stage_config()
         try:
-            refreshed, failed = await self.bot.service.save_stage_settings(guild.id, self.current_stage_config())
+            preview = self.bot.service.preview_stage_settings(guild, draft_stage)
         except ValueError as e:
             await interaction.followup.send(str(e), ephemeral=True)
             return
 
-        config = self.bot.store.get_status_config(guild.id)
-        current_stage = get_stage(config, self.stage_index) if config is not None else None
-        new_view = StageSetupView(
+        new_view = StageSavePreviewView(
             self.bot,
             self.owner_id,
             guild,
-            self.stage_index,
-            notice=build_stage_save_message(current_stage or self.current_stage_config(), refreshed, failed),
+            draft_stage,
+            preview,
         )
         await interaction.edit_original_response(content=new_view.render_content(), view=new_view)
-        await new_view.bind_message(interaction)
+        new_view.message = self.message
 
     @discord.ui.button(label="戻る", style=discord.ButtonStyle.secondary, row=2)
     async def back_to_home(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -413,3 +512,98 @@ class StageSetupView(OwnerOnlyView):
         )
         await interaction.response.edit_message(content=new_view.render_content(), view=new_view)
         await new_view.bind_message(interaction)
+
+
+class StageSavePreviewView(OwnerOnlyView):
+    def __init__(
+        self,
+        bot: "StatusBot",
+        owner_id: int,
+        guild: discord.Guild,
+        draft_stage: StatusStageConfig,
+        summary,
+    ) -> None:
+        super().__init__(bot, owner_id)
+        self.guild_id = guild.id
+        self.stage_index = draft_stage.stage_index
+        self.draft_stage = draft_stage
+        self.summary = summary
+
+    def render_content(self) -> str:
+        guild = self.bot.get_guild(self.guild_id)
+        if guild is None:
+            return "サーバー情報が見つかりません。"
+
+        config = self.bot.store.get_status_config(self.guild_id)
+        if config is None:
+            return "先に段階数を設定してください。"
+
+        persisted_stage = get_stage(config, self.stage_index) or default_stage_config(self.stage_index)
+        return build_stage_save_preview_message(
+            guild,
+            persisted_stage,
+            self.draft_stage,
+            config,
+            self.summary,
+        )
+
+    @discord.ui.button(label="編集に戻る", style=discord.ButtonStyle.secondary)
+    async def back_to_editor(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        new_view = StageSetupView(
+            self.bot,
+            self.owner_id,
+            guild,
+            self.stage_index,
+            draft_stage=self.draft_stage,
+        )
+        await interaction.response.edit_message(content=new_view.render_content(), view=new_view)
+        await new_view.bind_message(interaction)
+
+    @discord.ui.button(label="この内容で保存", style=discord.ButtonStyle.success)
+    async def confirm_save(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        try:
+            self.bot.service.preview_stage_settings(guild, self.draft_stage)
+            refreshed, failed = await self.bot.service.save_stage_settings(guild.id, self.draft_stage)
+        except ValueError as e:
+            new_view = StageSetupView(
+                self.bot,
+                self.owner_id,
+                guild,
+                self.stage_index,
+                notice=str(e),
+                draft_stage=self.draft_stage,
+            )
+            await interaction.edit_original_response(content=new_view.render_content(), view=new_view)
+            new_view.message = self.message
+            return
+
+        config = self.bot.store.get_status_config(guild.id)
+        current_stage = get_stage(config, self.stage_index) if config is not None else None
+        new_view = StageSetupView(
+            self.bot,
+            self.owner_id,
+            guild,
+            self.stage_index,
+            notice=build_stage_save_message(current_stage or self.draft_stage, refreshed, failed),
+        )
+        await interaction.edit_original_response(content=new_view.render_content(), view=new_view)
+        new_view.message = self.message

@@ -273,6 +273,17 @@ class StatusStore:
         ).fetchone()
         return 0 if row is None else row["cnt"]
 
+    def count_active_records_by_guild(self, guild_id: int) -> int:
+        row = self.db.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM status_records
+            WHERE guild_id = ?
+            """,
+            (guild_id,),
+        ).fetchone()
+        return 0 if row is None else row["cnt"]
+
     def clamp_records_to_stage(
         self,
         guild_id: int,

@@ -15,6 +15,20 @@ class FakeBot:
         return None
 
 
+class FakeRole:
+    def __init__(self, role_id: int) -> None:
+        self.id = role_id
+
+
+class FakeGuild:
+    def __init__(self, guild_id: int, role_ids: tuple[int, ...]) -> None:
+        self.id = guild_id
+        self._roles = {role_id: FakeRole(role_id) for role_id in role_ids}
+
+    def get_role(self, role_id: int):
+        return self._roles.get(role_id)
+
+
 class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".db")
@@ -75,6 +89,91 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         row = await self.service.assign_status(1, member, 4, "reason", "tester")
         self.assertIsNotNone(row)
         self.assertEqual(row["stage_index"], 4)
+
+    async def test_preview_stage_count_settings_reports_reapply_and_clamp_counts(self) -> None:
+        self.store.set_stage_count_value(1, 4)
+        self.store.ensure_stage_rows(1, 4)
+        for idx, role_id in ((1, 11), (2, 22), (3, 33), (4, 44)):
+            action = ACTION_CLEAR if idx == 1 else ACTION_NEXT
+            self.store.upsert_status_stage(1, StatusStageConfig(idx, "", role_id, days_to_seconds(idx), action))
+        self.store.upsert_status_record(1, 10, 4, now_ts() + 10, "a")
+        self.store.upsert_status_record(1, 20, 2, now_ts() + 10, "b")
+        self.store.commit()
+
+        summary = self.service.preview_stage_count_settings(FakeGuild(1, (11, 22)), 3)
+        self.assertEqual(summary.reapply_count, 2)
+        self.assertEqual(summary.clamp_count, 1)
+        self.assertEqual(summary.missing_role_count, 1)
+
+    async def test_preview_stage_count_settings_rejects_incomplete_clamp_target(self) -> None:
+        self.store.set_stage_count_value(1, 4)
+        self.store.ensure_stage_rows(1, 4)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(3, "", None, days_to_seconds(3), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(4, "", 44, days_to_seconds(4), ACTION_NEXT))
+        self.store.upsert_status_record(1, 10, 4, now_ts() + 10, "a")
+        self.store.commit()
+
+        with self.assertRaises(ValueError):
+            self.service.preview_stage_count_settings(FakeGuild(1, (11, 22, 44)), 3)
+
+    async def test_preview_stage_settings_counts_other_missing_roles(self) -> None:
+        self.store.set_stage_count_value(1, 3)
+        self.store.ensure_stage_rows(1, 3)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(3, "", 33, days_to_seconds(3), ACTION_NEXT))
+        self.store.upsert_status_record(1, 10, 2, now_ts() + 10, "a")
+        self.store.commit()
+
+        summary = self.service.preview_stage_settings(
+            FakeGuild(1, (11, 22)),
+            StatusStageConfig(2, "更新", 22, days_to_seconds(5), ACTION_NEXT),
+        )
+        self.assertEqual(summary.reapply_count, 1)
+        self.assertEqual(summary.clamp_count, 0)
+        self.assertEqual(summary.missing_role_count, 1)
+
+    async def test_preview_stage_settings_rejects_missing_selected_role(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.commit()
+
+        with self.assertRaises(ValueError):
+            self.service.preview_stage_settings(
+                FakeGuild(1, (11,)),
+                StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT),
+            )
+
+    async def test_preview_stage_count_settings_excludes_records_cleared_by_reconcile(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 10, 1, now_ts() - 5, "expired")
+        self.store.upsert_status_record(1, 20, 2, now_ts() + 60, "active")
+        self.store.commit()
+
+        summary = self.service.preview_stage_count_settings(FakeGuild(1, (11, 22)), 2)
+        self.assertEqual(summary.reapply_count, 1)
+
+    async def test_preview_stage_settings_excludes_records_cleared_by_reconcile(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 10, 1, now_ts() - 5, "expired")
+        self.store.upsert_status_record(1, 20, 2, now_ts() + 60, "active")
+        self.store.commit()
+
+        summary = self.service.preview_stage_settings(
+            FakeGuild(1, (11, 22)),
+            StatusStageConfig(2, "更新", 22, days_to_seconds(3), ACTION_NEXT),
+        )
+        self.assertEqual(summary.reapply_count, 1)
 
 
 if __name__ == "__main__":

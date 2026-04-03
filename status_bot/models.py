@@ -16,3 +16,10 @@ class GuildStatusConfig:
     guild_id: int
     stage_count: int
     stages: list[StatusStageConfig]
+
+
+@dataclass(frozen=True)
+class SetupPreviewSummary:
+    reapply_count: int
+    clamp_count: int
+    missing_role_count: int
