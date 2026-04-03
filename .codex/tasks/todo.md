@@ -112,18 +112,28 @@
 - 今回の `/status_list` 実装では未解決事項は残っていない
 - 今回の `/status_list` レビュー修正 2 件でも追加の未解決事項は残っていない
 - 今回の通知設定追加では、`/status_notify_config`、guild 単位通知設定保存、主要イベント通知、回帰テスト追加までを対象にする
+- 今回のリファクタリングでは、`status_bot/service.py` の責務分割と façade 化、公開挙動維持、補助テスト追加までを対象にする
 
 ## Current Task
 
-- [x] 通知設定テーブルと通知設定モデルを追加する
-- [x] `/status_notify_config` コマンドと表示/保存文面を追加する
-- [x] 手動付与・手動解除・自動遷移・自動解除・`hold`・設定変更の通知送信を追加する
-- [x] migration / command / service の回帰テストを追加する
+- [x] `StatusService` の共有 helper を service common module へ抽出する
+- [x] preview / list / history の read 系処理を query module へ抽出する
+- [x] notification 処理を dedicated module へ抽出する
+- [x] mutation 系処理を action module へ抽出し、`service.py` を façade 化する
+- [x] 既存回帰テストを維持しつつ補助テストを追加する
 - [x] `python -m py_compile bot.py status_bot/*.py tests/*.py` を実施する
 - [x] `python -m unittest discover -s tests` を実施する
 
 ## Changes
 
+- `status_bot/service_common.py` を追加し、`ServiceContext`、履歴記録 helper、actor/member 表示解決、role からの段階推定、member fetch を共通化した
+- `status_bot/service_queries.py` を追加し、preview 集計、overdue projection、一覧取得、履歴取得を `StatusService` から分離した
+- `status_bot/service_notifications.py` を追加し、通知トグル判定、本文選択、送信失敗ログ、2000 文字制限処理を専用化した
+- `status_bot/service_actions.py` を追加し、ロール適用、reconcile、設定保存、手動付与/解除、再参加時再適用など mutation 系ユースケースを集約した
+- `status_bot/service.py` を façade に置き換え、既存の `StatusService` public API を保ったまま新モジュールへ委譲する構成にした
+- `tests/test_service_queries.py` を追加し、projection helper の `clear` / `hold` の基本挙動を小粒に固定した
+- `tests/test_service_notifications.py` を追加し、通知トグル対応と 2000 文字制限を小粒に固定した
+- `tests/test_service_transitions.py` では分割後の action module に合わせて patch 先を更新し、既存の public behavior 回帰を維持した
 - `status_bot/store.py` に `guild_status_notifications` テーブル、通知設定 getter / upsert を追加し、既存 DB では通知未設定・全 OFF の既定値で扱えるようにした
 - `status_bot/models.py` に `GuildStatusNotificationConfig` を追加し、guild 単位の通知先チャンネルと 5 種の通知トグルを保持するようにした
 - `status_bot/commands.py` に `/status_notify_config` を追加し、現在設定の表示、部分更新、全無効化、通知先テキストチャンネルの権限確認を行えるようにした
@@ -316,5 +326,10 @@
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 52 tests, OK
 - 実施: `git diff --stat` -> 今回の追加差分が `status_bot/formatters.py`、`status_bot/service.py`、`tests/test_service_transitions.py` に限定されていることを確認
+- 実施: `git status --short` -> 編集前 worktree が clean であることを確認
+- 実施: `wc -l bot.py status_bot/*.py tests/*.py | sort -n` / `rg -n "^(class|def|async def) " status_bot/service.py status_bot/views.py` / `sed -n '1,520p' status_bot/service.py` -> `StatusService` が遷移・通知・preview・一覧・履歴を過密に抱えていたことと、分割対象境界を確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 56 tests, OK
+- 実施: `git diff --stat` -> 今回の差分が `status_bot/service*.py`、service 補助テスト、`.codex/tasks/todo.md` に限定されていることを確認
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため
