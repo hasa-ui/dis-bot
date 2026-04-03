@@ -19,6 +19,17 @@ class GuildStatusConfig:
 
 
 @dataclass(frozen=True)
+class GuildStatusNotificationConfig:
+    guild_id: int
+    channel_id: Optional[int]
+    notify_manual_set: bool
+    notify_manual_clear: bool
+    notify_auto_transition: bool
+    notify_auto_hold: bool
+    notify_config_change: bool
+
+
+@dataclass(frozen=True)
 class SetupPreviewSummary:
     reapply_count: int
     clamp_count: int

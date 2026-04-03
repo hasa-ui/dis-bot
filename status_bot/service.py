@@ -15,8 +15,25 @@ from .config import (
     SETUP_GUIDANCE,
     logger,
 )
-from .formatters import describe_record_next_change, stage_display_name
-from .models import GuildStatusConfig, SetupPreviewSummary, StatusHistoryEntry, StatusListEntry, StatusStageConfig
+from .formatters import (
+    build_auto_clear_notification,
+    build_auto_hold_notification,
+    build_auto_transition_notification,
+    build_config_change_notification,
+    build_manual_clear_notification,
+    build_manual_set_notification,
+    describe_record_next_change,
+    stage_display_name,
+    truncate_notification_message,
+)
+from .models import (
+    GuildStatusConfig,
+    GuildStatusNotificationConfig,
+    SetupPreviewSummary,
+    StatusHistoryEntry,
+    StatusListEntry,
+    StatusStageConfig,
+)
 from .store import StatusStore
 from .validation import (
     configured_role_ids,
@@ -90,6 +107,132 @@ class StatusService:
 
         member = guild.get_member(actor_user_id)
         return member.mention if member is not None else f"<@{actor_user_id}>"
+
+    def _resolve_member_display(self, guild: discord.Guild, user_id: int) -> str:
+        member = guild.get_member(user_id)
+        return member.mention if member is not None else f"<@{user_id}>"
+
+    def _notification_enabled(
+        self,
+        config: GuildStatusNotificationConfig,
+        event_type: str,
+    ) -> bool:
+        if event_type == HISTORY_EVENT_MANUAL_SET:
+            return config.notify_manual_set
+        if event_type == HISTORY_EVENT_MANUAL_CLEAR:
+            return config.notify_manual_clear
+        if event_type in {HISTORY_EVENT_AUTO_TRANSITION, HISTORY_EVENT_AUTO_CLEAR}:
+            return config.notify_auto_transition
+        if event_type == HISTORY_EVENT_AUTO_HOLD:
+            return config.notify_auto_hold
+        if event_type in {HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED, HISTORY_EVENT_CONFIG_STAGE_SAVED}:
+            return config.notify_config_change
+        return False
+
+    async def _send_notification_content(self, guild: discord.Guild, channel_id: int, content: str) -> None:
+        channel = guild.get_channel(channel_id)
+        if channel is None:
+            logger.warning("Notification channel not found in cache: guild=%s channel=%s", guild.id, channel_id)
+            return
+
+        me = guild.me
+        if me is None:
+            logger.warning("Bot member not found for guild=%s when sending notification", guild.id)
+            return
+
+        perms = channel.permissions_for(me)
+        if not perms.view_channel or not perms.send_messages:
+            logger.warning(
+                "Missing permission for notification channel: guild=%s channel=%s",
+                guild.id,
+                channel_id,
+            )
+            return
+
+        try:
+            await channel.send(truncate_notification_message(content))
+        except discord.HTTPException:
+            logger.exception(
+                "Failed to send notification: guild=%s channel=%s",
+                guild.id,
+                channel_id,
+            )
+
+    async def send_status_notification(
+        self,
+        guild_id: int,
+        *,
+        event_type: str,
+        user_id: Optional[int] = None,
+        actor: Optional[object] = None,
+        from_stage_name: Optional[str] = None,
+        to_stage_name: Optional[str] = None,
+        next_change_text: Optional[str] = None,
+        reason: str = "",
+        detail: str = "",
+        refreshed: Optional[int] = None,
+        failed: Optional[int] = None,
+    ) -> None:
+        notification_config = self.store.get_status_notification_config(guild_id)
+        if notification_config.channel_id is None:
+            return
+        if not self._notification_enabled(notification_config, event_type):
+            return
+
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            logger.warning("Guild not found for notification: %s", guild_id)
+            return
+
+        actor_display = self._resolve_actor_display(guild, self._actor_user_id(actor))
+        member_display = self._resolve_member_display(guild, user_id) if user_id is not None else ""
+
+        if event_type == HISTORY_EVENT_MANUAL_SET:
+            content = build_manual_set_notification(
+                member_display,
+                to_stage_name or "不明",
+                next_change_text or "不明",
+                reason=reason,
+                actor_display=actor_display,
+            )
+        elif event_type == HISTORY_EVENT_MANUAL_CLEAR:
+            content = build_manual_clear_notification(
+                member_display,
+                from_stage_name,
+                reason=reason,
+                actor_display=actor_display,
+            )
+        elif event_type == HISTORY_EVENT_AUTO_TRANSITION:
+            content = build_auto_transition_notification(
+                member_display,
+                from_stage_name,
+                to_stage_name,
+                next_change_text or "不明",
+                reason=reason,
+            )
+        elif event_type == HISTORY_EVENT_AUTO_HOLD:
+            content = build_auto_hold_notification(
+                member_display,
+                to_stage_name,
+                reason=reason,
+            )
+        elif event_type == HISTORY_EVENT_AUTO_CLEAR:
+            content = build_auto_clear_notification(
+                member_display,
+                from_stage_name,
+                reason=reason,
+            )
+        elif event_type in {HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED, HISTORY_EVENT_CONFIG_STAGE_SAVED}:
+            content = build_config_change_notification(
+                detail,
+                actor_display=actor_display,
+                refreshed=0 if refreshed is None else refreshed,
+                failed=0 if failed is None else failed,
+            )
+        else:
+            return
+
+        await self._send_notification_content(guild, notification_config.channel_id, content)
 
     def _infer_stage_from_member_roles(
         self,
@@ -440,6 +583,7 @@ class StatusService:
 
             if current_stage.on_expire_action == ACTION_CLEAR:
                 self.store.delete_status_record(guild_id, user_id)
+                from_stage_name = self._resolve_history_stage_name(config, stage_index)
                 self._record_history(
                     guild_id,
                     user_id=user_id,
@@ -458,10 +602,19 @@ class StatusService:
                     logger.exception("Failed to clear status roles for user %s", user_id)
                 except RuntimeError:
                     logger.exception("Failed to clear status roles for user %s", user_id)
+                else:
+                    await self.send_status_notification(
+                        guild_id,
+                        event_type=HISTORY_EVENT_AUTO_CLEAR,
+                        user_id=user_id,
+                        from_stage_name=from_stage_name,
+                        reason=reason,
+                    )
                 return
 
             if current_stage.on_expire_action == ACTION_HOLD:
                 self.store.upsert_status_record(guild_id, user_id, stage_index, None, reason)
+                stage_name = self._resolve_history_stage_name(config, stage_index)
                 self._record_history(
                     guild_id,
                     user_id=user_id,
@@ -485,6 +638,14 @@ class StatusService:
                     logger.exception("Failed to hold status roles for user %s", user_id)
                 except RuntimeError:
                     logger.exception("Failed to hold status roles for user %s", user_id)
+                else:
+                    await self.send_status_notification(
+                        guild_id,
+                        event_type=HISTORY_EVENT_AUTO_HOLD,
+                        user_id=user_id,
+                        to_stage_name=stage_name,
+                        reason=reason,
+                    )
                 return
 
             next_stage = get_stage(config, stage_index - 1)
@@ -505,6 +666,8 @@ class StatusService:
             return
 
         self.store.upsert_status_record(guild_id, user_id, stage_index, expires_at, reason)
+        from_stage_name = self._resolve_history_stage_name(config, original_stage_index)
+        to_stage_name = self._resolve_history_stage_name(config, stage_index)
         self._record_history(
             guild_id,
             user_id=user_id,
@@ -528,6 +691,19 @@ class StatusService:
             logger.exception("Failed to update status roles for user %s", user_id)
         except RuntimeError:
             logger.exception("Failed to update status roles for user %s", user_id)
+        else:
+            await self.send_status_notification(
+                guild_id,
+                event_type=HISTORY_EVENT_AUTO_TRANSITION,
+                user_id=user_id,
+                from_stage_name=from_stage_name,
+                to_stage_name=to_stage_name,
+                next_change_text=describe_record_next_change(
+                    config,
+                    {"stage_index": stage_index, "expires_at": expires_at, "reason": reason},
+                ),
+                reason=reason,
+            )
 
     async def refresh_guild_status_roles(
         self,
@@ -629,11 +805,24 @@ class StatusService:
             ),
         )
         self.store.commit()
-        return await self.refresh_guild_status_roles(
+        detail = (
+            f"段階数を {'未設定' if previous_count is None else previous_count} から "
+            f"{stage_count} に変更"
+        )
+        refreshed, failed = await self.refresh_guild_status_roles(
             guild_id,
             remove_role_ids=previous_role_ids,
             actor=actor,
         )
+        await self.send_status_notification(
+            guild_id,
+            event_type=HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
+            actor=actor,
+            detail=detail,
+            refreshed=refreshed,
+            failed=failed,
+        )
+        return refreshed, failed
 
     async def save_stage_settings(
         self,
@@ -651,6 +840,12 @@ class StatusService:
         previous_role_ids = configured_role_ids(config)
         previous_stage = get_stage(config, stage.stage_index)
         self.store.upsert_status_stage(guild_id, stage)
+        detail = (
+            f"{stage_display_name(stage)} を保存 "
+            f"(ロール {previous_stage.role_id if previous_stage is not None else '未設定'} -> {stage.role_id}, "
+            f"期間 {previous_stage.duration_seconds if previous_stage is not None else '未設定'} -> {stage.duration_seconds}, "
+            f"満了時 {previous_stage.on_expire_action if previous_stage is not None else '未設定'} -> {stage.on_expire_action})"
+        )
         self._record_history(
             guild_id,
             user_id=None,
@@ -658,20 +853,24 @@ class StatusService:
             event_type=HISTORY_EVENT_CONFIG_STAGE_SAVED,
             from_stage_index=previous_stage.stage_index if previous_stage is not None else None,
             to_stage_index=stage.stage_index,
-            detail=(
-                f"{stage_display_name(stage)} を保存 "
-                f"(ロール {previous_stage.role_id if previous_stage is not None else '未設定'} -> {stage.role_id}, "
-                f"期間 {previous_stage.duration_seconds if previous_stage is not None else '未設定'} -> {stage.duration_seconds}, "
-                f"満了時 {previous_stage.on_expire_action if previous_stage is not None else '未設定'} -> {stage.on_expire_action})"
-            ),
+            detail=detail,
             config=config,
         )
         self.store.commit()
-        return await self.refresh_guild_status_roles(
+        refreshed, failed = await self.refresh_guild_status_roles(
             guild_id,
             remove_role_ids=previous_role_ids,
             actor=actor,
         )
+        await self.send_status_notification(
+            guild_id,
+            event_type=HISTORY_EVENT_CONFIG_STAGE_SAVED,
+            actor=actor,
+            detail=detail,
+            refreshed=refreshed,
+            failed=failed,
+        )
+        return refreshed, failed
 
     async def assign_status(
         self,
@@ -713,6 +912,18 @@ class StatusService:
             )
         except (discord.Forbidden, RuntimeError):
             raise
+        await self.send_status_notification(
+            guild_id,
+            event_type=HISTORY_EVENT_MANUAL_SET,
+            user_id=member.id,
+            actor=actor,
+            to_stage_name=self._resolve_history_stage_name(config, stage_index),
+            next_change_text=describe_record_next_change(
+                config,
+                {"stage_index": stage_index, "expires_at": expires_at, "reason": reason},
+            ),
+            reason=reason,
+        )
         return self.store.get_status_record(guild_id, member.id)
 
     async def clear_status(
@@ -726,14 +937,16 @@ class StatusService:
         stale_stage_index = self._infer_stage_from_member_roles(config, member) if previous is None else None
         if previous is not None or stale_stage_index is not None:
             self.store.delete_status_record(guild_id, member.id)
+            from_stage_index = previous["stage_index"] if previous is not None else stale_stage_index
+            reason = previous["reason"] if previous is not None else ""
             self._record_history(
                 guild_id,
                 user_id=member.id,
                 actor=actor,
                 event_type=HISTORY_EVENT_MANUAL_CLEAR,
-                from_stage_index=previous["stage_index"] if previous is not None else stale_stage_index,
+                from_stage_index=from_stage_index,
                 to_stage_index=None,
-                reason=previous["reason"] if previous is not None else "",
+                reason=reason,
                 config=config,
             )
             self.store.commit()
@@ -746,3 +959,15 @@ class StatusService:
             )
         except (discord.Forbidden, RuntimeError):
             raise
+        if previous is not None or stale_stage_index is not None:
+            await self.send_status_notification(
+                guild_id,
+                event_type=HISTORY_EVENT_MANUAL_CLEAR,
+                user_id=member.id,
+                actor=actor,
+                from_stage_name=self._resolve_history_stage_name(
+                    config,
+                    previous["stage_index"] if previous is not None else stale_stage_index,
+                ),
+                reason=previous["reason"] if previous is not None else "",
+            )

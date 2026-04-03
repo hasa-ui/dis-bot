@@ -111,9 +111,29 @@
 - 今回のレビュー指摘 2 件は修正済みで、追加の未解決事項は残っていない
 - 今回の `/status_list` 実装では未解決事項は残っていない
 - 今回の `/status_list` レビュー修正 2 件でも追加の未解決事項は残っていない
+- 今回の通知設定追加では、`/status_notify_config`、guild 単位通知設定保存、主要イベント通知、回帰テスト追加までを対象にする
+
+## Current Task
+
+- [x] 通知設定テーブルと通知設定モデルを追加する
+- [x] `/status_notify_config` コマンドと表示/保存文面を追加する
+- [x] 手動付与・手動解除・自動遷移・自動解除・`hold`・設定変更の通知送信を追加する
+- [x] migration / command / service の回帰テストを追加する
+- [x] `python -m py_compile bot.py status_bot/*.py tests/*.py` を実施する
+- [x] `python -m unittest discover -s tests` を実施する
 
 ## Changes
 
+- `status_bot/store.py` に `guild_status_notifications` テーブル、通知設定 getter / upsert を追加し、既存 DB では通知未設定・全 OFF の既定値で扱えるようにした
+- `status_bot/models.py` に `GuildStatusNotificationConfig` を追加し、guild 単位の通知先チャンネルと 5 種の通知トグルを保持するようにした
+- `status_bot/commands.py` に `/status_notify_config` を追加し、現在設定の表示、部分更新、全無効化、通知先テキストチャンネルの権限確認を行えるようにした
+- `status_bot/formatters.py` に通知設定表示文面と、手動付与・手動解除・自動遷移・自動解除・自動維持・設定変更の通知文面 builder を追加した
+- `status_bot/service.py` に通知判定と送信 helper を追加し、`assign_status` / `clear_status` / `reconcile_record` / `save_stage_count_settings` / `save_stage_settings` から主要イベント通知を発火するようにした
+- `status_bot/service.py` では通知送信を role edit 成功後へ移し、失敗時に成功通知を出さないようにした
+- `status_bot/formatters.py` と `status_bot/service.py` では通知本文を送信直前に 2000 文字以内へ切り詰め、長い理由や詳細で Discord 制限超過になっても通知が落ちないようにした
+- `tests/test_store_migration.py` に通知設定テーブル作成と既定値取得の確認を追加した
+- `tests/test_commands.py` に `/status_notify_config` の表示、権限制御、チャンネル未指定エラー、部分更新、`disable_all` 制約の回帰テストを追加した
+- `tests/test_service_transitions.py` に手動付与、no-op 手動解除、自動遷移、`hold`、自動解除、設定変更の通知回帰テストを追加した
 - `ロードマップ.md` を新規追加し、現行機能の現在地を整理したうえで、運用便利化と機能拡張の両輪で短期・中期・長期・検討のみの改善候補をまとめた
 - ロードマップでは現行公開コマンドを `/setup` / `/status_config` / `/status_set` / `/status_clear` / `/status_view` に固定し、将来候補のコマンド案は「未実装の案」として区別して記載した
 - 短期項目には一覧表示、履歴、通知、設定変更プレビューを置き、中期以降には一括操作、export/import、テンプレート、任意遷移、例外ルール、期限調整などを整理した
@@ -287,5 +307,14 @@
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 36 tests, OK
 - 実施: `git diff --stat` -> 今回追加差分が `status_list` 非破壊化、stale cleanup の `manual_clear` 履歴復元、関連テスト、`.codex/tasks/todo.md` に限定されていることを確認
+- 実施: `git status --short` -> 編集前 worktree が clean であることを確認
+- 実施: `sed -n '1,260p' タスクリスト.md` / `sed -n '1,260p' ロードマップ.md` / `sed -n '1,260p' status_bot/commands.py` / `sed -n '1,320p' status_bot/service.py` / `sed -n '1,320p' status_bot/store.py` -> 通知設定の要求範囲、既存イベント発火箇所、追加先の責務分離を確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 47 tests, OK
+- 実施: `git diff --stat` -> 変更が `status_bot` の通知設定実装、関連テスト、`タスクリスト.md`、`.codex/tasks/todo.md` に限定されていることを確認
+- 実施: `nl -ba status_bot/service.py | sed -n '130,230p'` / `nl -ba status_bot/service.py | sed -n '560,960p'` / `nl -ba status_bot/formatters.py | sed -n '180,320p'` -> 通知送信順序とメッセージ長制御の修正箇所を確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 52 tests, OK
+- 実施: `git diff --stat` -> 今回の追加差分が `status_bot/formatters.py`、`status_bot/service.py`、`tests/test_service_transitions.py` に限定されていることを確認
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため
