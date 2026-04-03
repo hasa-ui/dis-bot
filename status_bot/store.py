@@ -85,7 +85,9 @@ class StatusStore:
                 actor_user_id    INTEGER,
                 event_type       TEXT NOT NULL,
                 from_stage_index INTEGER,
+                from_stage_name  TEXT,
                 to_stage_index   INTEGER,
+                to_stage_name    TEXT,
                 reason           TEXT NOT NULL DEFAULT '',
                 detail           TEXT NOT NULL DEFAULT '',
                 created_at       INTEGER NOT NULL
@@ -98,8 +100,19 @@ class StatusStore:
             ON status_history_records (guild_id, user_id, created_at DESC, id DESC)
             """
         )
+        self._ensure_status_history_columns()
         self.commit()
         self._migrate_legacy_data()
+
+    def _ensure_status_history_columns(self) -> None:
+        columns = {
+            row["name"]
+            for row in self.db.execute("PRAGMA table_info(status_history_records)").fetchall()
+        }
+        if "from_stage_name" not in columns:
+            self.db.execute("ALTER TABLE status_history_records ADD COLUMN from_stage_name TEXT")
+        if "to_stage_name" not in columns:
+            self.db.execute("ALTER TABLE status_history_records ADD COLUMN to_stage_name TEXT")
 
     def _migrate_legacy_data(self) -> None:
         changed = False
@@ -404,7 +417,9 @@ class StatusStore:
         actor_user_id: Optional[int],
         event_type: str,
         from_stage_index: Optional[int],
+        from_stage_name: Optional[str],
         to_stage_index: Optional[int],
+        to_stage_name: Optional[str],
         reason: str,
         detail: str,
         created_at: Optional[int] = None,
@@ -413,9 +428,10 @@ class StatusStore:
             """
             INSERT INTO status_history_records (
                 guild_id, user_id, actor_user_id, event_type,
-                from_stage_index, to_stage_index, reason, detail, created_at
+                from_stage_index, from_stage_name, to_stage_index, to_stage_name,
+                reason, detail, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 guild_id,
@@ -423,7 +439,9 @@ class StatusStore:
                 actor_user_id,
                 event_type,
                 from_stage_index,
+                from_stage_name,
                 to_stage_index,
+                to_stage_name,
                 reason,
                 detail,
                 now_ts() if created_at is None else created_at,
@@ -435,7 +453,8 @@ class StatusStore:
             """
             SELECT
                 id, guild_id, user_id, actor_user_id, event_type,
-                from_stage_index, to_stage_index, reason, detail, created_at
+                from_stage_index, from_stage_name, to_stage_index, to_stage_name,
+                reason, detail, created_at
             FROM status_history_records
             WHERE guild_id = ? AND user_id = ?
             ORDER BY created_at DESC, id DESC

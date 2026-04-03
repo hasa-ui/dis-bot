@@ -49,6 +49,9 @@ class StatusService:
         to_stage_index: Optional[int],
         reason: str = "",
         detail: str = "",
+        config: Optional[GuildStatusConfig] = None,
+        from_stage_name: Optional[str] = None,
+        to_stage_name: Optional[str] = None,
     ) -> None:
         self.store.append_status_history(
             guild_id,
@@ -56,7 +59,17 @@ class StatusService:
             actor_user_id=self._actor_user_id(actor) if actor is not None else None,
             event_type=event_type,
             from_stage_index=from_stage_index,
+            from_stage_name=(
+                from_stage_name
+                if from_stage_name is not None or from_stage_index is None
+                else self._resolve_history_stage_name(config, from_stage_index)
+            ),
             to_stage_index=to_stage_index,
+            to_stage_name=(
+                to_stage_name
+                if to_stage_name is not None or to_stage_index is None
+                else self._resolve_history_stage_name(config, to_stage_index)
+            ),
             reason=reason,
             detail=detail,
         )
@@ -321,8 +334,14 @@ class StatusService:
                 created_at=row["created_at"],
                 event_type=row["event_type"],
                 actor_display=self._resolve_actor_display(guild, row["actor_user_id"]),
-                from_stage_name=self._resolve_history_stage_name(config, row["from_stage_index"]),
-                to_stage_name=self._resolve_history_stage_name(config, row["to_stage_index"]),
+                from_stage_name=(
+                    row["from_stage_name"]
+                    or self._resolve_history_stage_name(config, row["from_stage_index"])
+                ),
+                to_stage_name=(
+                    row["to_stage_name"]
+                    or self._resolve_history_stage_name(config, row["to_stage_index"])
+                ),
                 reason=row["reason"] or "",
                 detail=row["detail"] or "",
             )
@@ -412,6 +431,7 @@ class StatusService:
                     to_stage_index=None,
                     reason=reason,
                     detail="期限満了により解除",
+                    config=config,
                 )
                 self.store.commit()
                 try:
@@ -433,6 +453,7 @@ class StatusService:
                     to_stage_index=stage_index,
                     reason=reason,
                     detail="期限満了により同じ段階を維持",
+                    config=config,
                 )
                 self.store.commit()
                 try:
@@ -475,6 +496,7 @@ class StatusService:
             to_stage_index=stage_index,
             reason=reason,
             detail="期限満了により自動遷移",
+            config=config,
         )
         self.store.commit()
         try:
@@ -624,6 +646,7 @@ class StatusService:
                 f"期間 {previous_stage.duration_seconds if previous_stage is not None else '未設定'} -> {stage.duration_seconds}, "
                 f"満了時 {previous_stage.on_expire_action if previous_stage is not None else '未設定'} -> {stage.on_expire_action})"
             ),
+            config=config,
         )
         self.store.commit()
         return await self.refresh_guild_status_roles(
@@ -660,6 +683,7 @@ class StatusService:
             from_stage_index=previous["stage_index"] if previous is not None else None,
             to_stage_index=stage_index,
             reason=reason,
+            config=config,
         )
         self.store.commit()
         try:
@@ -680,17 +704,20 @@ class StatusService:
         actor: object,
     ) -> None:
         previous = self.store.get_status_record(guild_id, member.id)
-        self.store.delete_status_record(guild_id, member.id)
-        self._record_history(
-            guild_id,
-            user_id=member.id,
-            actor=actor,
-            event_type=HISTORY_EVENT_MANUAL_CLEAR,
-            from_stage_index=previous["stage_index"] if previous is not None else None,
-            to_stage_index=None,
-            reason=previous["reason"] if previous is not None else "",
-        )
-        self.store.commit()
+        if previous is not None:
+            config = self.store.get_status_config(guild_id)
+            self.store.delete_status_record(guild_id, member.id)
+            self._record_history(
+                guild_id,
+                user_id=member.id,
+                actor=actor,
+                event_type=HISTORY_EVENT_MANUAL_CLEAR,
+                from_stage_index=previous["stage_index"],
+                to_stage_index=None,
+                reason=previous["reason"] or "",
+                config=config,
+            )
+            self.store.commit()
         try:
             await self.apply_status_role(
                 guild_id,

@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from status_bot.models import StatusHistoryEntry
 
@@ -59,25 +59,21 @@ class FakeInteraction:
 
 
 class CommandTests(unittest.IsolatedAsyncioTestCase):
-    async def test_status_list_requires_manage_roles(self) -> None:
+    async def test_status_list_defers_without_manage_roles(self) -> None:
         bot = FakeBot()
+        bot.service.list_guild_status_records = AsyncMock(return_value=[])
         register_commands(bot)
         command = bot.tree.commands["status_list"]
 
-        interaction = SimpleNamespace(
+        interaction = FakeInteraction(
             guild=SimpleNamespace(id=1),
             user=SimpleNamespace(id=10),
-            response=FakeResponse(),
         )
 
-        with patch("status_bot.commands.has_manage_roles", return_value=False):
-            await command(interaction)
+        await command(interaction)
 
-        self.assertEqual(
-            interaction.response.messages,
-            [("Manage Roles 権限が必要です。", True)],
-        )
-        self.assertFalse(interaction.response.deferred)
+        self.assertTrue(interaction.response.deferred)
+        self.assertEqual(interaction.edits, [("このサーバーに有効なステータス状態はありません。", None)])
 
     async def test_status_history_returns_empty_message_when_no_history(self) -> None:
         bot = FakeBot()
@@ -126,7 +122,6 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(interaction.edits), 1)
         self.assertIn("<@20> のステータス履歴", interaction.edits[0][0])
         self.assertIsNotNone(interaction.edits[0][1])
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -101,24 +101,6 @@ class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(allowed)
         self.assertTrue(interaction.response.called)
 
-    async def test_status_list_view_rechecks_manage_roles(self) -> None:
-        entries = [StatusListEntry(1, "<@1>", 1, "段階1", "1日後に 解除", "", 1)]
-        view = StatusListView(1, entries)
-
-        class FakeResponse:
-            def __init__(self) -> None:
-                self.messages: list[tuple[str, bool]] = []
-
-            async def send_message(self, content: str, ephemeral: bool = False) -> None:
-                self.messages.append((content, ephemeral))
-
-        interaction = SimpleNamespace(user=SimpleNamespace(id=1), response=FakeResponse(), guild=object())
-        with patch("status_bot.views.has_manage_roles", return_value=False):
-            allowed = await view.interaction_check(interaction)
-
-        self.assertFalse(allowed)
-        self.assertEqual(interaction.response.messages, [("Manage Roles 権限が必要です。", True)])
-
     async def test_status_history_view_updates_button_state_by_page(self) -> None:
         entries = [
             StatusHistoryEntry(i, "manual_set", f"<@{i}>", None, "段階1", "理由" * 10, "詳細" * 10)

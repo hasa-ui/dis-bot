@@ -109,6 +109,7 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         history = self.store.get_status_history_for_member(1, 301)
         self.assertEqual(history[0]["event_type"], "manual_clear")
         self.assertEqual(history[0]["from_stage_index"], 2)
+        self.assertEqual(history[0]["from_stage_name"], "段階2")
         self.assertIsNone(history[0]["to_stage_index"])
 
     async def test_reconcile_transition_records_auto_transition_history(self) -> None:
@@ -124,7 +125,41 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         history = self.store.get_status_history_for_member(1, 302)
         self.assertEqual(history[0]["event_type"], "auto_transition")
         self.assertEqual(history[0]["from_stage_index"], 2)
+        self.assertEqual(history[0]["from_stage_name"], "段階2")
         self.assertEqual(history[0]["to_stage_index"], 1)
+        self.assertEqual(history[0]["to_stage_name"], "段階1")
+
+    async def test_status_history_uses_snapshot_stage_names_after_stage_rename(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "旧名", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 302, 2, now_ts() - 1, "expired")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22))
+        guild.get_member = lambda user_id: SimpleNamespace(mention=f"<@{user_id}>")
+        await self.service.reconcile_record(self.store.get_status_record(1, 302))
+
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "更新後", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "新名", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.commit()
+
+        entries = await self.service.list_member_status_history(guild, 302)
+        self.assertEqual(entries[0].from_stage_name, "段階2（旧名）")
+        self.assertEqual(entries[0].to_stage_name, "段階1")
+
+    async def test_clear_status_without_active_record_skips_manual_clear_history(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.commit()
+
+        member = SimpleNamespace(id=401)
+        await self.service.clear_status(1, member, "tester")
+
+        self.assertEqual(self.store.get_status_history_for_member(1, 401), [])
 
     async def test_save_stage_settings_records_config_history(self) -> None:
         self.store.set_stage_count_value(1, 2)

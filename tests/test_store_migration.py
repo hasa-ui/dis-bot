@@ -7,6 +7,44 @@ from status_bot.store import StatusStore
 
 
 class StoreMigrationTests(unittest.TestCase):
+    def test_existing_history_table_gains_snapshot_columns(self) -> None:
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            db = sqlite3.connect(path)
+            db.execute(
+                """
+                CREATE TABLE status_history_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER,
+                    actor_user_id INTEGER,
+                    event_type TEXT NOT NULL,
+                    from_stage_index INTEGER,
+                    to_stage_index INTEGER,
+                    reason TEXT NOT NULL DEFAULT '',
+                    detail TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            db.commit()
+            db.close()
+
+            store = StatusStore(path)
+            try:
+                columns = {
+                    row["name"]
+                    for row in store.db.execute("PRAGMA table_info(status_history_records)").fetchall()
+                }
+                self.assertIn("from_stage_name", columns)
+                self.assertIn("to_stage_name", columns)
+            finally:
+                store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
     def test_legacy_rows_migrate_into_status_tables(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)

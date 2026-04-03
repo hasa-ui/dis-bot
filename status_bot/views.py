@@ -16,7 +16,7 @@ from .formatters import (
     paginate_status_list_messages,
 )
 from .models import GuildStatusConfig, StatusHistoryEntry, StatusListEntry, StatusStageConfig
-from .permissions import has_manage_guild, has_manage_roles
+from .permissions import has_manage_guild
 from .validation import (
     days_to_seconds,
     default_stage_config,
@@ -86,17 +86,7 @@ class StatusListView(UserOnlyView):
         self._sync_buttons()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not await super().interaction_check(interaction):
-            return False
-
-        if not has_manage_roles(interaction):
-            await interaction.response.send_message(
-                "Manage Roles 権限が必要です。",
-                ephemeral=True,
-            )
-            return False
-
-        return True
+        return await super().interaction_check(interaction)
 
     @property
     def page_count(self) -> int:
@@ -146,14 +136,7 @@ class StatusHistoryView(UserOnlyView):
         self._sync_buttons()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                "この履歴画面はコマンド実行者のみ操作できます。",
-                ephemeral=True,
-            )
-            return False
-
-        return True
+        return await super().interaction_check(interaction)
 
     @property
     def page_count(self) -> int:
