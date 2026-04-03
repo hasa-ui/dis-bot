@@ -1,5 +1,8 @@
 # TODO
 
+- [x] `/status_list` のページング View でも `Manage Roles` を再確認する
+- [x] 上記の回帰テストを追加し、構文検証と `unittest` を再実施する
+
 - [x] `/status_list` を moderator 権限必須へ修正し、理由の露出範囲を制限する
 - [x] `/status_list` のページ分割を固定件数から文字数上限制御へ変更する
 - [x] 上記 2 件の回帰テストと lessons を追加し、構文検証と `unittest` を再実施する
@@ -243,5 +246,10 @@
 - 実施: `python -m unittest discover -s tests` -> 21 tests, OK
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 23 tests, OK
+- 実施: `git status --short` -> 編集前 worktree が clean であることを確認
+- 実施: `sed -n '1,220p' status_bot/views.py` / `sed -n '180,260p' status_bot/commands.py` / `sed -n '1,180p' status_bot/permissions.py` / `sed -n '1,180p' tests/test_views.py` -> `/status_list` の初回コマンドでだけ `Manage Roles` を確認し、`StatusListView` 側では owner 判定のみだったことを確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 24 tests, OK
+- 実施: `git diff -- status_bot/views.py tests/test_views.py .codex/tasks/todo.md .codex/tasks/lessons.md` -> `StatusListView` に `Manage Roles` 再確認と回帰テストだけが入っていることを確認
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため

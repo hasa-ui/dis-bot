@@ -14,7 +14,7 @@ from .formatters import (
     paginate_status_list_messages,
 )
 from .models import GuildStatusConfig, StatusListEntry, StatusStageConfig
-from .permissions import has_manage_guild
+from .permissions import has_manage_guild, has_manage_roles
 from .validation import (
     days_to_seconds,
     default_stage_config,
@@ -82,6 +82,19 @@ class StatusListView(UserOnlyView):
         self.pages = paginate_status_list_messages(entries, max_length=max_length)
         self.page_index = min(page_index, len(self.pages) - 1)
         self._sync_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not await super().interaction_check(interaction):
+            return False
+
+        if not has_manage_roles(interaction):
+            await interaction.response.send_message(
+                "Manage Roles 権限が必要です。",
+                ephemeral=True,
+            )
+            return False
+
+        return True
 
     @property
     def page_count(self) -> int:
