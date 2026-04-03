@@ -15,8 +15,8 @@ from .config import (
     SETUP_GUIDANCE,
     logger,
 )
-from .formatters import describe_record_next_change, stage_display_name
-from .models import StatusStageConfig
+from .formatters import describe_record_next_change, shorten_reason, stage_display_name
+from .models import BulkOperationResult, StatusStageConfig
 from .service_common import (
     ServiceContext,
     fetch_member_if_needed,
@@ -435,6 +435,13 @@ async def assign_status(
 
     previous = context.store.get_status_record(guild_id, member.id)
     expires_at = now_ts() + current_stage.duration_seconds
+    await apply_status_role(
+        context,
+        guild_id,
+        member.id,
+        stage_index,
+        reason=f"Manual status set by {actor}",
+    )
     context.store.upsert_status_record(guild_id, member.id, stage_index, expires_at, reason)
     record_history(
         context,
@@ -448,13 +455,6 @@ async def assign_status(
         config=config,
     )
     context.store.commit()
-    await apply_status_role(
-        context,
-        guild_id,
-        member.id,
-        stage_index,
-        reason=f"Manual status set by {actor}",
-    )
     await send_status_notification(
         context,
         guild_id,
@@ -480,6 +480,13 @@ async def clear_status(
     config = context.store.get_status_config(guild_id)
     previous = context.store.get_status_record(guild_id, member.id)
     stale_stage_index = infer_stage_from_member_roles(config, member) if previous is None else None
+    await apply_status_role(
+        context,
+        guild_id,
+        member.id,
+        None,
+        reason=f"Manual status clear by {actor}",
+    )
     if previous is not None or stale_stage_index is not None:
         context.store.delete_status_record(guild_id, member.id)
         from_stage_index = previous["stage_index"] if previous is not None else stale_stage_index
@@ -496,14 +503,6 @@ async def clear_status(
             config=config,
         )
         context.store.commit()
-    await apply_status_role(
-        context,
-        guild_id,
-        member.id,
-        None,
-        reason=f"Manual status clear by {actor}",
-    )
-    if previous is not None or stale_stage_index is not None:
         await send_status_notification(
             context,
             guild_id,
@@ -516,3 +515,88 @@ async def clear_status(
             ),
             reason=previous["reason"] if previous is not None else "",
         )
+
+
+async def bulk_assign_status(
+    context: ServiceContext,
+    guild_id: int,
+    members: list[discord.Member],
+    stage_index: int,
+    reason: str,
+    actor: object,
+) -> BulkOperationResult:
+    success_count = 0
+    failure_count = 0
+    detail_lines: list[str] = []
+
+    for member in members:
+        try:
+            await assign_status(context, guild_id, member, stage_index, reason, actor)
+        except discord.Forbidden:
+            failure_count += 1
+            detail_lines.append(f"- {member.mention}: 失敗 (権限不足)")
+            logger.warning("Failed to bulk-assign status for user %s", member.id)
+        except discord.HTTPException as exc:
+            failure_count += 1
+            detail_lines.append(
+                f"- {member.mention}: 失敗 ({shorten_reason(str(exc) or exc.__class__.__name__, 80)})"
+            )
+            logger.warning("Failed to bulk-assign status for user %s", member.id)
+        except RuntimeError as exc:
+            failure_count += 1
+            detail_lines.append(f"- {member.mention}: 失敗 ({shorten_reason(str(exc), 80)})")
+            logger.warning("Failed to bulk-assign status for user %s", member.id)
+        else:
+            success_count += 1
+
+    return BulkOperationResult(
+        processed_count=len(members),
+        success_count=success_count,
+        failure_count=failure_count,
+        detail_lines=detail_lines,
+    )
+
+
+async def bulk_clear_status(
+    context: ServiceContext,
+    guild_id: int,
+    members: list[discord.Member],
+    actor: object,
+) -> BulkOperationResult:
+    config = context.store.get_status_config(guild_id)
+    success_count = 0
+    failure_count = 0
+    detail_lines: list[str] = []
+
+    for member in members:
+        row = context.store.get_status_record(guild_id, member.id)
+        stale_stage_index = infer_stage_from_member_roles(config, member) if row is None else None
+        if row is None and stale_stage_index is None:
+            detail_lines.append(f"- {member.mention}: 除外 (解除対象なし)")
+            continue
+
+        try:
+            await clear_status(context, guild_id, member, actor)
+        except discord.Forbidden:
+            failure_count += 1
+            detail_lines.append(f"- {member.mention}: 失敗 (権限不足)")
+            logger.warning("Failed to bulk-clear status for user %s", member.id)
+        except discord.HTTPException as exc:
+            failure_count += 1
+            detail_lines.append(
+                f"- {member.mention}: 失敗 ({shorten_reason(str(exc) or exc.__class__.__name__, 80)})"
+            )
+            logger.warning("Failed to bulk-clear status for user %s", member.id)
+        except RuntimeError as exc:
+            failure_count += 1
+            detail_lines.append(f"- {member.mention}: 失敗 ({shorten_reason(str(exc), 80)})")
+            logger.warning("Failed to bulk-clear status for user %s", member.id)
+        else:
+            success_count += 1
+
+    return BulkOperationResult(
+        processed_count=len(members),
+        success_count=success_count,
+        failure_count=failure_count,
+        detail_lines=detail_lines,
+    )

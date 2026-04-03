@@ -56,3 +56,11 @@ class StatusHistoryEntry:
     to_stage_name: Optional[str]
     reason: str
     detail: str
+
+
+@dataclass(frozen=True)
+class BulkOperationResult:
+    processed_count: int
+    success_count: int
+    failure_count: int
+    detail_lines: list[str]

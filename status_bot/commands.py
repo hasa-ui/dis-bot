@@ -1,3 +1,4 @@
+import re
 from typing import TYPE_CHECKING, Optional
 
 import discord
@@ -5,19 +6,96 @@ from discord import app_commands
 
 from .config import MAX_STAGE_COUNT, SETUP_GUIDANCE, logger
 from .formatters import (
+    build_bulk_operation_message,
     build_status_notify_config_message,
     build_setup_home_message,
     build_status_config_message,
     describe_record_next_change,
     stage_display_name,
 )
-from .models import GuildStatusNotificationConfig
+from .models import BulkOperationResult, GuildStatusNotificationConfig
 from .permissions import can_manage_target, has_manage_guild, has_manage_roles
 from .validation import default_stage_name, get_stage, stage_path_is_ready
 from .views import SetupHomeView, StatusHistoryView, StatusListView
 
 if TYPE_CHECKING:
     from .app import StatusBot
+
+
+_BULK_TARGET_PATTERN = re.compile(r"^<@!?(\d+)>$")
+
+
+def _parse_bulk_target_id(token: str) -> Optional[int]:
+    stripped = token.strip()
+    if stripped.isdigit():
+        return int(stripped)
+
+    match = _BULK_TARGET_PATTERN.fullmatch(stripped)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+async def _resolve_bulk_targets(
+    interaction: discord.Interaction,
+    attachment: discord.Attachment,
+    bot: "StatusBot",
+) -> tuple[list[discord.Member], list[str], int]:
+    guild = interaction.guild
+    if guild is None:
+        return [], [], 0
+
+    try:
+        raw = await attachment.read()
+    except discord.DiscordException as exc:
+        raise ValueError(f"添付ファイルの読み込みに失敗しました: {exc}") from exc
+
+    try:
+        content = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("添付ファイルは UTF-8 テキストである必要があります。") from exc
+
+    members: list[discord.Member] = []
+    skipped_lines: list[str] = []
+    seen_ids: set[int] = set()
+    input_count = 0
+
+    for line_no, raw_line in enumerate(content.splitlines(), start=1):
+        token = raw_line.strip()
+        if not token:
+            continue
+
+        input_count += 1
+        user_id = _parse_bulk_target_id(token)
+        if user_id is None:
+            skipped_lines.append(f"- {line_no}行目: `{token}` はメンバーIDまたはメンションではありません。")
+            continue
+
+        if user_id in seen_ids:
+            skipped_lines.append(f"- {line_no}行目: <@{user_id}> は重複しているため除外しました。")
+            continue
+        seen_ids.add(user_id)
+
+        try:
+            member = await bot.service.fetch_member_if_needed(guild.id, user_id)
+        except (discord.DiscordException, RuntimeError) as exc:
+            skipped_lines.append(
+                f"- {line_no}行目: <@{user_id}> の取得に失敗しました "
+                f"({str(exc) or exc.__class__.__name__})。"
+            )
+            continue
+        if member is None:
+            skipped_lines.append(f"- {line_no}行目: <@{user_id}> はこのサーバーで見つかりませんでした。")
+            continue
+
+        ok, msg = can_manage_target(guild, member)
+        if not ok:
+            skipped_lines.append(f"- {line_no}行目: {msg}")
+            continue
+
+        members.append(member)
+
+    return members, skipped_lines, input_count
 
 
 def register_commands(bot: "StatusBot") -> None:
@@ -243,6 +321,95 @@ def register_commands(bot: "StatusBot") -> None:
             ephemeral=True,
         )
 
+    @bot.tree.command(name="status_bulk_set", description="複数メンバーにステータスロールを付与します")
+    @app_commands.describe(
+        targets="対象一覧を添付した UTF-8 テキストファイル",
+        stage="対象段階 (1〜10)",
+        reason="理由",
+    )
+    async def status_bulk_set(
+        interaction: discord.Interaction,
+        targets: discord.Attachment,
+        stage: app_commands.Range[int, 1, MAX_STAGE_COUNT],
+        reason: Optional[str] = None,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+        if not has_manage_roles(interaction):
+            await interaction.response.send_message("Manage Roles 権限が必要です。", ephemeral=True)
+            return
+
+        config = bot.store.get_status_config(interaction.guild.id)
+        if config is None:
+            await interaction.response.send_message(
+                f"このサーバーのステータス設定が未完了です。\n先に {SETUP_GUIDANCE}",
+                ephemeral=True,
+            )
+            return
+        if stage > config.stage_count:
+            await interaction.response.send_message(
+                f"このサーバーは 1〜{config.stage_count} 段階だけ設定されています。",
+                ephemeral=True,
+            )
+            return
+        if not stage_path_is_ready(config, stage):
+            await interaction.response.send_message(
+                f"{default_stage_name(stage)} から到達するステータス設定が未完了です。\n先に {SETUP_GUIDANCE}",
+                ephemeral=True,
+            )
+            return
+
+        current_stage = get_stage(config, stage)
+        if current_stage is None:
+            await interaction.response.send_message("段階設定の取得に失敗しました。", ephemeral=True)
+            return
+
+        reason = reason or ""
+        await interaction.response.defer(ephemeral=True)
+        try:
+            members, skipped_lines, input_count = await _resolve_bulk_targets(interaction, targets, bot)
+        except ValueError as e:
+            await interaction.edit_original_response(content=str(e), view=None)
+            return
+
+        if input_count == 0:
+            await interaction.edit_original_response(content="対象がありません。", view=None)
+            return
+
+        if not members:
+            await interaction.edit_original_response(
+                content=build_bulk_operation_message(
+                    f"ステータス一括付与結果 ({stage_display_name(current_stage)})",
+                    BulkOperationResult(
+                        processed_count=0,
+                        success_count=0,
+                        failure_count=0,
+                        detail_lines=[],
+                    ),
+                    skipped_count=len(skipped_lines),
+                    skipped_lines=skipped_lines,
+                )
+            )
+            return
+
+        result = await bot.service.bulk_assign_status(
+            interaction.guild.id,
+            members,
+            stage,
+            reason,
+            interaction.user,
+        )
+        await interaction.edit_original_response(
+            content=build_bulk_operation_message(
+                f"ステータス一括付与結果 ({stage_display_name(current_stage)})",
+                result,
+                skipped_count=len(skipped_lines),
+                skipped_lines=skipped_lines,
+            ),
+            view=None,
+        )
+
     @bot.tree.command(name="status_clear", description="ステータスロールを即時解除します")
     @app_commands.describe(member="対象メンバー")
     async def status_clear(interaction: discord.Interaction, member: discord.Member) -> None:
@@ -273,6 +440,68 @@ def register_commands(bot: "StatusBot") -> None:
         await interaction.response.send_message(
             f"{member.mention} のステータスロールを解除しました。",
             ephemeral=True,
+        )
+
+    @bot.tree.command(name="status_bulk_clear", description="複数メンバーのステータスロールを解除します")
+    @app_commands.describe(targets="対象一覧を添付した UTF-8 テキストファイル")
+    async def status_bulk_clear(
+        interaction: discord.Interaction,
+        targets: discord.Attachment,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+        if not has_manage_roles(interaction):
+            await interaction.response.send_message("Manage Roles 権限が必要です。", ephemeral=True)
+            return
+
+        if bot.store.get_status_config(interaction.guild.id) is None:
+            await interaction.response.send_message(
+                f"このサーバーのステータス設定が未完了です。\n先に {SETUP_GUIDANCE}",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            members, skipped_lines, input_count = await _resolve_bulk_targets(interaction, targets, bot)
+        except ValueError as e:
+            await interaction.edit_original_response(content=str(e), view=None)
+            return
+
+        if input_count == 0:
+            await interaction.edit_original_response(content="対象がありません。", view=None)
+            return
+
+        if not members:
+            await interaction.edit_original_response(
+                content=build_bulk_operation_message(
+                    "ステータス一括解除結果",
+                    BulkOperationResult(
+                        processed_count=0,
+                        success_count=0,
+                        failure_count=0,
+                        detail_lines=[],
+                    ),
+                    skipped_count=len(skipped_lines),
+                    skipped_lines=skipped_lines,
+                )
+            )
+            return
+
+        result = await bot.service.bulk_clear_status(
+            interaction.guild.id,
+            members,
+            interaction.user,
+        )
+        await interaction.edit_original_response(
+            content=build_bulk_operation_message(
+                "ステータス一括解除結果",
+                result,
+                skipped_count=len(skipped_lines),
+                skipped_lines=skipped_lines,
+            ),
+            view=None,
         )
 
     @bot.tree.command(name="status_view", description="現在のステータス状態を確認します")
