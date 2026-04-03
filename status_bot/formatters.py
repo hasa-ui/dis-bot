@@ -20,6 +20,7 @@ from .config import (
 from .models import (
     GuildStatusConfig,
     GuildStatusNotificationConfig,
+    BulkOperationResult,
     SetupPreviewSummary,
     StatusHistoryEntry,
     StatusListEntry,
@@ -36,6 +37,7 @@ from .validation import (
 
 STATUS_LIST_MESSAGE_LIMIT = 1900
 STATUS_HISTORY_MESSAGE_LIMIT = 1900
+STATUS_BULK_MESSAGE_LIMIT = 1900
 NOTIFICATION_MESSAGE_LIMIT = 2000
 HISTORY_EVENT_LABELS = {
     HISTORY_EVENT_MANUAL_SET: "手動付与",
@@ -178,6 +180,37 @@ def build_status_config_message(guild: discord.Guild, config: Optional[GuildStat
         lines.append(f"設定変更は {SETUP_GUIDANCE}")
 
     return "\n".join(lines)
+
+
+def build_bulk_operation_message(
+    title: str,
+    result: BulkOperationResult,
+    *,
+    skipped_count: int = 0,
+    skipped_lines: Optional[list[str]] = None,
+    max_detail_lines: int = 8,
+) -> str:
+    lines = [
+        title,
+        f"- 対象件数: {result.processed_count + skipped_count}件",
+        f"- 成功: {result.success_count}件",
+        f"- 失敗: {result.failure_count}件",
+        f"- 除外: {skipped_count}件",
+    ]
+
+    all_detail_lines = []
+    if skipped_lines:
+        all_detail_lines.extend(skipped_lines)
+    all_detail_lines.extend(result.detail_lines)
+
+    if all_detail_lines:
+        lines.append("- 詳細:")
+        shown_lines = all_detail_lines[:max_detail_lines]
+        lines.extend(shown_lines)
+        if len(all_detail_lines) > max_detail_lines:
+            lines.append(f"- ... 他{len(all_detail_lines) - max_detail_lines}件")
+
+    return truncate_notification_message("\n".join(lines), STATUS_BULK_MESSAGE_LIMIT)
 
 
 def format_notification_channel(channel_id: Optional[int]) -> str:

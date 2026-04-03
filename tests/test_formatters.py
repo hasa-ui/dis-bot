@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from status_bot.config import ACTION_CLEAR, ACTION_NEXT
 from status_bot.formatters import (
+    build_bulk_operation_message,
     build_stage_count_preview_message,
     build_stage_save_preview_message,
     build_status_history_message,
@@ -11,7 +12,14 @@ from status_bot.formatters import (
     paginate_status_history_messages,
     paginate_status_list_messages,
 )
-from status_bot.models import GuildStatusConfig, SetupPreviewSummary, StatusHistoryEntry, StatusListEntry, StatusStageConfig
+from status_bot.models import (
+    BulkOperationResult,
+    GuildStatusConfig,
+    SetupPreviewSummary,
+    StatusHistoryEntry,
+    StatusListEntry,
+    StatusStageConfig,
+)
 from status_bot.validation import days_to_seconds
 
 
@@ -144,6 +152,27 @@ class FormatterTests(unittest.TestCase):
         self.assertIn("ページ: 1/1", message)
         self.assertIn("全件数: 1件", message)
         self.assertIn("手動付与 / 実行者 <@99> / 変更 段階1 -> 段階2（警告） / 理由 確認用の理由 / 詳細 手動更新", message)
+
+    def test_build_bulk_operation_message_contains_summary_and_details(self) -> None:
+        message = build_bulk_operation_message(
+            "ステータス一括付与結果",
+            BulkOperationResult(
+                processed_count=3,
+                success_count=2,
+                failure_count=1,
+                detail_lines=["- <@2>: 失敗 (権限不足)", "- <@3>: 成功"],
+            ),
+            skipped_count=1,
+            skipped_lines=["- 4行目: 重複しているため除外しました。"],
+        )
+
+        self.assertIn("ステータス一括付与結果", message)
+        self.assertIn("対象件数: 4件", message)
+        self.assertIn("成功: 2件", message)
+        self.assertIn("失敗: 1件", message)
+        self.assertIn("除外: 1件", message)
+        self.assertIn("詳細:", message)
+        self.assertIn("重複しているため除外しました。", message)
 
     def test_paginate_status_list_messages_splits_before_discord_limit(self) -> None:
         entries = [

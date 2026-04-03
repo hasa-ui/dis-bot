@@ -4,6 +4,9 @@
 - [x] 短期ロードマップを完了済みタスクとして整理する
 - [x] 中期ロードマップ 5.1 から 5.4 を実装単位のチェックリストへ分解する
 - [x] 中期タスク向けの検証観点と完了条件を `タスクリスト.md` へ反映する
+- [x] 一括操作として `/status_bulk_set` / `/status_bulk_clear` を追加する
+- [x] 添付テキストの解析、重複除外、権限除外、部分失敗集計を実装する
+- [x] 一括操作の回帰テストと整形テストを追加し、構文検証と `unittest` を再実施する
 
 - [x] `/status_list` の一覧取得を非破壊化し、公開のまま自動遷移を強制できないようにする
 - [x] stale role cleanup 時の `manual_clear` 履歴を復元する
@@ -341,5 +344,7 @@
 - 実施: `git diff --stat -- タスクリスト.md .codex/tasks/todo.md` -> 今回の差分が `タスクリスト.md` の中期ロードマップ化と `.codex/tasks/todo.md` の作業記録追加に限定されていることを確認
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 56 tests, OK
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 61 tests, OK
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため

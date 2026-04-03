@@ -4,6 +4,8 @@ import discord
 
 from .models import StatusStageConfig
 from .service_actions import (
+    bulk_assign_status,
+    bulk_clear_status,
     apply_status_role,
     assign_status,
     clear_status,
@@ -158,3 +160,21 @@ class StatusService:
         actor: object,
     ) -> None:
         await clear_status(self.context, guild_id, member, actor)
+
+    async def bulk_assign_status(
+        self,
+        guild_id: int,
+        members: list[discord.Member],
+        stage_index: int,
+        reason: str,
+        actor: object,
+    ):
+        return await bulk_assign_status(self.context, guild_id, members, stage_index, reason, actor)
+
+    async def bulk_clear_status(
+        self,
+        guild_id: int,
+        members: list[discord.Member],
+        actor: object,
+    ):
+        return await bulk_clear_status(self.context, guild_id, members, actor)
