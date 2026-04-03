@@ -1,5 +1,14 @@
 # TODO
 
+- [x] `/status_list` のページング View でも `Manage Roles` を再確認する
+- [x] 上記の回帰テストを追加し、構文検証と `unittest` を再実施する
+
+- [x] `/status_list` を moderator 権限必須へ修正し、理由の露出範囲を制限する
+- [x] `/status_list` のページ分割を固定件数から文字数上限制御へ変更する
+- [x] 上記 2 件の回帰テストと lessons を追加し、構文検証と `unittest` を再実施する
+- [x] `/status_list` の一覧取得 helper と表示用モデルを追加する
+- [x] `/status_list` command とページング View / formatter を追加する
+- [x] `/status_list` の service / formatter / view 回帰テストを追加し、構文検証と `unittest` を実施する
 - [x] `/setup` の stale draft が別段階へ保存されないよう、段階数変更時の復元ガードを追加する
 - [x] `/setup` preview の再適用件数を raw row 数ではなく reconcile 後件数へ合わせる
 - [x] 上記 2 件の回帰テストと lessons を追記し、構文検証と `unittest` を再実施する
@@ -83,12 +92,17 @@
 - 今回の `タスクリスト.md` 作成では未解決事項は残っていない
 - 今回の `/setup` 保存前プレビュー実装では未解決事項は残っていない
 - 今回のレビュー指摘 2 件は修正済みで、追加の未解決事項は残っていない
+- 今回の `/status_list` 実装では未解決事項は残っていない
+- 今回の `/status_list` レビュー修正 2 件でも追加の未解決事項は残っていない
 
 ## Changes
 
 - `ロードマップ.md` を新規追加し、現行機能の現在地を整理したうえで、運用便利化と機能拡張の両輪で短期・中期・長期・検討のみの改善候補をまとめた
 - ロードマップでは現行公開コマンドを `/setup` / `/status_config` / `/status_set` / `/status_clear` / `/status_view` に固定し、将来候補のコマンド案は「未実装の案」として区別して記載した
 - 短期項目には一覧表示、履歴、通知、設定変更プレビューを置き、中期以降には一括操作、export/import、テンプレート、任意遷移、例外ルール、期限調整などを整理した
+- `/status_list` を `Manage Roles` 権限必須に変更し、理由を含む一覧を moderator 向けに限定した
+- `/status_list` のページ分割を固定 10 件から本文長ベースへ変更し、各ページが Discord の 2000 文字上限を超えないよう安全余白付きで分割するようにした
+- `tests/test_commands.py` を追加し、`/status_list` の権限制御を固定した
 - `.codex/tasks/agents_md_update_proposal.md` を追加し、`AGENTS.md` と現行 repo 実態の食い違い、更新対象節、差分要点、置き換え文案をまとめた
 - 更新案では `bot.py` の役割を薄いエントリポイントへ修正し、`status_bot/`、`tests/`、`supervisor.sh`、`setenv.example.sh` を主要ファイルに含める方針を明記した
 - 更新案では旧 `違反` / 固定 3 段前提を、可変段階の `ステータス` モデルと legacy migration 前提に置き換える文案を用意した
@@ -157,9 +171,19 @@
 - `tests/test_views.py` を追加し、段階数縮小後に stale draft が別段階へ化けないことを回帰テスト化した
 - `tests/test_service_transitions.py` に overdue record が preview 件数へ過大計上されないことの回帰テストを追加し、`unittest` 件数を 16 件へ増やした
 - `.codex/tasks/lessons.md` に、stale draft の復元条件と preview 件数を reconcile 後基準へ合わせる再発防止メモを追記した
+- `status_bot/models.py` に `StatusListEntry` を追加し、`status_bot/service.py` に guild 内の active record を reconcile 後の表示用一覧へ整形する `list_guild_status_records()` を追加した
+- `status_bot/commands.py` に `/status_list` を追加し、`ephemeral` な original response 上で `StatusListView` の前後ボタンによりページ送りできるようにした
+- `status_bot/formatters.py` に `/status_list` 用 message builder を追加し、各行へメンバー・現在段階・次回変更・理由を載せるようにした
+- `status_bot/views.py` に実行者本人だけが操作できる `UserOnlyView` と、一覧ページング用の `StatusListView` を追加した
+- `tests/test_service_transitions.py`、`tests/test_formatters.py`、`tests/test_views.py` に `/status_list` の並び順・期限切れ除外・本文・ページング状態の回帰テストを追加し、`unittest` 件数を 21 件へ増やした
 
 ## Verification
 
+- 実施: `git status --short` -> 実装前 worktree が clean であることを確認
+- 実施: `sed -n '1,260p' タスクリスト.md` / `sed -n '1,240p' status_bot/commands.py` / `sed -n '1,260p' status_bot/formatters.py` / `sed -n '1,420p' status_bot/store.py` -> `/status_list` の対象仕様、既存 command 構成、表示 helper、一覧取得ベース API を確認
+- 実施: `find tests -maxdepth 1 -type f | sort | xargs -I{} sh -c "echo '--- {}'; sed -n '1,220p' '{}'"` -> 既存テストの足場と追加先を確認
+- 実施: `rg -n "discord\\.ui\\.View|button\\(|Select\\(|original_response|edit_original_response|followup" status_bot` / `sed -n '1,260p' status_bot/views.py` / `sed -n '1,200p' status_bot/permissions.py` / `sed -n '1,220p' status_bot/app.py` -> 既存 View 流儀、ephemeral 応答の扱い、権限 helper、bot 構成を確認
+- 実施: `rg -n "StatusListEntry|list_guild_status_records|build_status_list_message|StatusListView|status_list\\(" status_bot tests` -> `/status_list` の実装要素と回帰テスト追加が入ったことを確認
 - 実施: `git status --short` -> 実装前 worktree が clean であることを確認
 - 実施: `sed -n '1,220p' status_bot/views.py` / `sed -n '220,420p' status_bot/views.py` / `sed -n '1,260p' status_bot/formatters.py` / `rg -n "save_stage_count_settings|save_stage_settings|refresh_guild_status_roles|count_records_above_stage|clamp_records_to_stage|build_.*message" status_bot` -> `/setup` の現行保存フローとプレビュー導入箇所を確認
 - 実施: `sed -n '1,220p' status_bot/models.py` / `sed -n '1,220p' status_bot/validation.py` / `sed -n '1,260p' tests/test_formatters.py` / `sed -n '1,320p' tests/test_service_transitions.py` -> 追加すべき内部モデルと既存テストの足場を確認
@@ -218,5 +242,14 @@
 - 実施: `git diff --stat` -> 変更が `.codex/tasks/todo.md`、`status_bot/` の setup 周辺、関連テストに限定されていることを確認
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 16 tests, OK
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 21 tests, OK
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 23 tests, OK
+- 実施: `git status --short` -> 編集前 worktree が clean であることを確認
+- 実施: `sed -n '1,220p' status_bot/views.py` / `sed -n '180,260p' status_bot/commands.py` / `sed -n '1,180p' status_bot/permissions.py` / `sed -n '1,180p' tests/test_views.py` -> `/status_list` の初回コマンドでだけ `Manage Roles` を確認し、`StatusListView` 側では owner 判定のみだったことを確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 24 tests, OK
+- 実施: `git diff -- status_bot/views.py tests/test_views.py .codex/tasks/todo.md .codex/tasks/lessons.md` -> `StatusListView` に `Manage Roles` 再確認と回帰テストだけが入っていることを確認
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため

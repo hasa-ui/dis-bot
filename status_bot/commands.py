@@ -12,7 +12,7 @@ from .formatters import (
 )
 from .permissions import can_manage_target, has_manage_guild, has_manage_roles
 from .validation import default_stage_name, get_stage, stage_path_is_ready
-from .views import SetupHomeView
+from .views import SetupHomeView, StatusListView
 
 if TYPE_CHECKING:
     from .app import StatusBot
@@ -197,6 +197,33 @@ def register_commands(bot: "StatusBot") -> None:
             f"- 理由: {row['reason'] or '（なし）'}",
             ephemeral=True,
         )
+
+    @bot.tree.command(name="status_list", description="現在のステータス一覧を確認します")
+    async def status_list(interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+        if not has_manage_roles(interaction):
+            await interaction.response.send_message("Manage Roles 権限が必要です。", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            entries = await bot.service.list_guild_status_records(interaction.guild)
+        except RuntimeError as e:
+            await interaction.edit_original_response(content=str(e), view=None)
+            return
+
+        if not entries:
+            await interaction.edit_original_response(
+                content="このサーバーに有効なステータス状態はありません。",
+                view=None,
+            )
+            return
+
+        view = StatusListView(interaction.user.id, entries)
+        await interaction.edit_original_response(content=view.render_content(), view=view)
+        await view.bind_message(interaction)
 
     @bot.tree.error
     async def on_app_command_error(

@@ -5,9 +5,11 @@ from status_bot.config import ACTION_CLEAR, ACTION_NEXT
 from status_bot.formatters import (
     build_stage_count_preview_message,
     build_stage_save_preview_message,
+    build_status_list_message,
     build_status_config_message,
+    paginate_status_list_messages,
 )
-from status_bot.models import GuildStatusConfig, SetupPreviewSummary, StatusStageConfig
+from status_bot.models import GuildStatusConfig, SetupPreviewSummary, StatusListEntry, StatusStageConfig
 from status_bot.validation import days_to_seconds
 
 
@@ -83,6 +85,60 @@ class FormatterTests(unittest.TestCase):
         self.assertIn("保存後の期間: 3日", message)
         self.assertIn("保存後の満了時: 段階1へ移行", message)
         self.assertIn("再適用対象: 4件", message)
+
+    def test_build_status_list_message_contains_page_and_reason(self) -> None:
+        message = build_status_list_message(
+            [
+                StatusListEntry(
+                    user_id=10,
+                    member_display="<@10>",
+                    stage_index=2,
+                    stage_name="段階2（警告）",
+                    next_change_text="1日後に 段階1へ移行",
+                    reason="確認用の理由",
+                    expires_at=12345,
+                ),
+                StatusListEntry(
+                    user_id=20,
+                    member_display="<@20>",
+                    stage_index=1,
+                    stage_name="段階1",
+                    next_change_text="なし（現在の段階を維持中）",
+                    reason="",
+                    expires_at=None,
+                ),
+            ],
+            page_index=0,
+            page_count=2,
+            total_count=11,
+        )
+
+        self.assertIn("現在のステータス一覧", message)
+        self.assertIn("ページ: 1/2", message)
+        self.assertIn("全件数: 11件", message)
+        self.assertIn("<@10>: 段階2（警告） / 次回変更 1日後に 段階1へ移行 / 理由 確認用の理由", message)
+        self.assertIn("<@20>: 段階1 / 次回変更 なし（現在の段階を維持中） / 理由 （なし）", message)
+
+    def test_paginate_status_list_messages_splits_before_discord_limit(self) -> None:
+        entries = [
+            StatusListEntry(
+                user_id=index,
+                member_display=f"<@{index}>",
+                stage_index=2,
+                stage_name="段階2（" + ("警告" * 20) + "）",
+                next_change_text="<@&1> と <@&2> の確認後に 段階1へ移行",
+                reason="確認メモ" * 20,
+                expires_at=1000 + index,
+            )
+            for index in range(1, 8)
+        ]
+
+        pages = paginate_status_list_messages(entries, max_length=400)
+
+        self.assertGreater(len(pages), 1)
+        self.assertTrue(all(len(page) <= 400 for page in pages))
+        self.assertIn(f"ページ: 1/{len(pages)}", pages[0])
+        self.assertIn(f"ページ: {len(pages)}/{len(pages)}", pages[-1])
 
 
 if __name__ == "__main__":

@@ -1,11 +1,13 @@
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from status_bot.models import StatusStageConfig
+from status_bot.models import StatusListEntry, StatusStageConfig
 from status_bot.store import StatusStore
 from status_bot.validation import days_to_seconds
-from status_bot.views import StageSetupView
+from status_bot.views import StageSetupView, StatusListView
 
 
 class FakeGuild:
@@ -14,6 +16,9 @@ class FakeGuild:
 
     def get_role(self, role_id: int):
         return None
+
+    def get_member(self, user_id: int):
+        return SimpleNamespace(mention=f"<@{user_id}>")
 
 
 class FakeBot:
@@ -57,6 +62,62 @@ class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current.label, "現行")
         self.assertEqual(current.role_id, 22)
         self.assertIn("下書きは復元せず", view.notice or "")
+
+    async def test_status_list_view_updates_button_state_by_page(self) -> None:
+        entries = [
+            StatusListEntry(i, f"<@{i}>", 1, "段階1（" + ("警告" * 10) + "）", "1日後に 解除", "確認メモ" * 10, i)
+            for i in range(3)
+        ]
+        view = StatusListView(1, entries, max_length=220)
+
+        self.assertGreater(view.page_count, 1)
+        self.assertTrue(view.previous_page.disabled)
+        self.assertFalse(view.next_page.disabled)
+        self.assertIn(f"ページ: 1/{view.page_count}", view.render_content())
+
+        view.page_index = 1
+        view._sync_buttons()
+        self.assertFalse(view.previous_page.disabled)
+        if view.page_count == 2:
+            self.assertTrue(view.next_page.disabled)
+        else:
+            self.assertFalse(view.next_page.disabled)
+        self.assertIn(f"ページ: 2/{view.page_count}", view.render_content())
+
+    async def test_status_list_view_rejects_other_user(self) -> None:
+        entries = [StatusListEntry(1, "<@1>", 1, "段階1", "1日後に 解除", "", 1)]
+        view = StatusListView(1, entries)
+
+        class FakeResponse:
+            def __init__(self) -> None:
+                self.called = False
+
+            async def send_message(self, content: str, ephemeral: bool = False) -> None:
+                self.called = True
+
+        interaction = SimpleNamespace(user=SimpleNamespace(id=2), response=FakeResponse())
+        allowed = await view.interaction_check(interaction)
+
+        self.assertFalse(allowed)
+        self.assertTrue(interaction.response.called)
+
+    async def test_status_list_view_rechecks_manage_roles(self) -> None:
+        entries = [StatusListEntry(1, "<@1>", 1, "段階1", "1日後に 解除", "", 1)]
+        view = StatusListView(1, entries)
+
+        class FakeResponse:
+            def __init__(self) -> None:
+                self.messages: list[tuple[str, bool]] = []
+
+            async def send_message(self, content: str, ephemeral: bool = False) -> None:
+                self.messages.append((content, ephemeral))
+
+        interaction = SimpleNamespace(user=SimpleNamespace(id=1), response=FakeResponse(), guild=object())
+        with patch("status_bot.views.has_manage_roles", return_value=False):
+            allowed = await view.interaction_check(interaction)
+
+        self.assertFalse(allowed)
+        self.assertEqual(interaction.response.messages, [("Manage Roles 権限が必要です。", True)])
 
 
 if __name__ == "__main__":
