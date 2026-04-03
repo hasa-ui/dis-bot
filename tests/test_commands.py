@@ -306,6 +306,23 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"stage_count": 1', content)
         self.assertIn('"label": "警告"', content)
 
+    async def test_status_export_rejects_incomplete_settings(self) -> None:
+        bot = FakeBot()
+        bot.service.export_status_config = Mock(side_effect=RuntimeError("未完了"))
+        register_commands(bot)
+        command = bot.tree.commands["status_export"]
+
+        interaction = FakeInteraction(
+            guild=FakeGuild(1),
+            user=SimpleNamespace(id=10),
+        )
+
+        with patch("status_bot.commands.has_manage_guild", return_value=True):
+            await command(interaction)
+
+        self.assertEqual(interaction.response.messages, [("未完了", True, None)])
+        self.assertEqual(interaction.response.files, [None])
+
     async def test_status_import_renders_preview(self) -> None:
         guild = FakeGuild(1, role_ids=(11,))
         bot = FakeBot(guild)

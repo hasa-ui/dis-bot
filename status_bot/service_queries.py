@@ -23,6 +23,7 @@ from .models import (
 from .service_common import ServiceContext, resolve_actor_display, resolve_history_stage_name
 from .validation import (
     default_stage_config,
+    config_complete,
     get_stage,
     is_stage_ready,
     normalize_label,
@@ -169,6 +170,11 @@ def export_status_config(
     config = context.store.get_status_config(guild.id)
     if config is None:
         raise RuntimeError(f"このサーバーのステータス設定が未完了です。\n先に {SETUP_GUIDANCE}")
+    if not config_complete(config):
+        raise RuntimeError(
+            "このサーバーのステータス設定は未完了です。"
+            "\n先に /setup を完了してから export してください。"
+        )
 
     return StatusConfigExportPayload(
         schema_version=STATUS_CONFIG_EXPORT_SCHEMA_VERSION,

@@ -15,6 +15,8 @@
 - [x] `/status_export` / `/status_import` を追加する
 - [x] export/import の JSON 形式、validation、preview、atomic apply を実装する
 - [x] export/import の回帰テストを追加し、構文検証と `unittest` を再実施する
+- [x] export は未完了の stage 設定を出力しないようにする
+- [x] export の未完了設定拒否に対する回帰テストを追加し、構文検証と `unittest` を再実施する
 
 - [x] `/status_list` の一覧取得を非破壊化し、公開のまま自動遷移を強制できないようにする
 - [x] stale role cleanup 時の `manual_clear` 履歴を復元する
