@@ -91,6 +91,24 @@ class StatusService:
         member = guild.get_member(actor_user_id)
         return member.mention if member is not None else f"<@{actor_user_id}>"
 
+    def _infer_stage_from_member_roles(
+        self,
+        config: Optional[GuildStatusConfig],
+        member: object,
+    ) -> Optional[int]:
+        if config is None:
+            return None
+
+        roles = getattr(member, "roles", None)
+        if roles is None:
+            return None
+
+        role_ids = {getattr(role, "id", None) for role in roles}
+        for stage in reversed(config.stages):
+            if stage.role_id is not None and stage.role_id in role_ids:
+                return stage.stage_index
+        return None
+
     def _predict_reconciled_record(
         self,
         config: GuildStatusConfig,
@@ -289,27 +307,27 @@ class StatusService:
         if config is None:
             raise RuntimeError(f"このサーバーのステータス設定が未完了です。\n先に {SETUP_GUIDANCE}")
 
+        current_ts = now_ts()
         entries: list[StatusListEntry] = []
         for row in self.store.get_active_records_by_guild(guild.id):
-            await self.reconcile_record(row)
-            current = self.store.get_status_record(guild.id, row["user_id"])
-            if current is None:
+            projected = self._predict_reconciled_record(config, row, current_ts=current_ts)
+            if projected is None:
                 continue
 
-            current_stage = get_stage(config, current["stage_index"])
+            current_stage = get_stage(config, projected["stage_index"])
             if current_stage is None:
                 raise RuntimeError("段階設定の取得に失敗しました。")
 
-            member = guild.get_member(current["user_id"])
+            member = guild.get_member(row["user_id"])
             entries.append(
                 StatusListEntry(
-                    user_id=current["user_id"],
-                    member_display=member.mention if member is not None else f"<@{current['user_id']}>",
-                    stage_index=current["stage_index"],
+                    user_id=row["user_id"],
+                    member_display=member.mention if member is not None else f"<@{row['user_id']}>",
+                    stage_index=projected["stage_index"],
                     stage_name=stage_display_name(current_stage),
-                    next_change_text=describe_record_next_change(config, current),
-                    reason=current["reason"] or "",
-                    expires_at=current["expires_at"],
+                    next_change_text=describe_record_next_change(config, projected),
+                    reason=str(projected["reason"] or ""),
+                    expires_at=projected["expires_at"],
                 )
             )
 
@@ -703,18 +721,19 @@ class StatusService:
         member: discord.Member,
         actor: object,
     ) -> None:
+        config = self.store.get_status_config(guild_id)
         previous = self.store.get_status_record(guild_id, member.id)
-        if previous is not None:
-            config = self.store.get_status_config(guild_id)
+        stale_stage_index = self._infer_stage_from_member_roles(config, member) if previous is None else None
+        if previous is not None or stale_stage_index is not None:
             self.store.delete_status_record(guild_id, member.id)
             self._record_history(
                 guild_id,
                 user_id=member.id,
                 actor=actor,
                 event_type=HISTORY_EVENT_MANUAL_CLEAR,
-                from_stage_index=previous["stage_index"],
+                from_stage_index=previous["stage_index"] if previous is not None else stale_stage_index,
                 to_stage_index=None,
-                reason=previous["reason"] or "",
+                reason=previous["reason"] if previous is not None else "",
                 config=config,
             )
             self.store.commit()

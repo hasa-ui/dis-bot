@@ -1,5 +1,9 @@
 # TODO
 
+- [x] `/status_list` の一覧取得を非破壊化し、公開のまま自動遷移を強制できないようにする
+- [x] stale role cleanup 時の `manual_clear` 履歴を復元する
+- [x] 上記 2 件の回帰テストを追加し、構文検証と `unittest` を再実施する
+
 - [x] `/status_list` と `/status_history` の閲覧を誰でも可能にする
 - [x] 上記に合わせて権限制御テストを更新し、構文検証と `unittest` を再実施する
 
@@ -279,5 +283,9 @@
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 34 tests, OK
 - 実施: `git diff --stat` -> 今回追加差分が `status_list` / `status_history` の公開化、関連テスト更新、`.codex/tasks/todo.md` に限定されていることを確認
+- 実施: `sed -n '300,760p' status_bot/service.py` / `rg -n "list_guild_status_records|clear_status|manual_clear" tests/test_service_transitions.py` -> `/status_list` が `reconcile_record()` を呼んでいたことと、stale role cleanup の履歴が落ちていたことを確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 36 tests, OK
+- 実施: `git diff --stat` -> 今回追加差分が `status_list` 非破壊化、stale cleanup の `manual_clear` 履歴復元、関連テスト、`.codex/tasks/todo.md` に限定されていることを確認
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため
