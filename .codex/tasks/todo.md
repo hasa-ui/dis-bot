@@ -1,5 +1,8 @@
 # TODO
 
+- [x] 現行実装を根拠にロードマップ候補と優先軸を整理する
+- [x] 運用便利化と機能拡張の両輪で `ロードマップ.md` を作成する
+- [x] ロードマップの現状説明と将来案が混在していないことを確認する
 - [x] `AGENTS.md` と現行リポジトリ構成・用語・検証手順の食い違いを整理する
 - [x] `AGENTS.md` を編集せず、更新案だけを `.codex/tasks/` に文案としてまとめる
 - [x] 更新案の対象節・差分要点・置き換え文案を記録する
@@ -71,6 +74,9 @@
 
 ## Changes
 
+- `ロードマップ.md` を新規追加し、現行機能の現在地を整理したうえで、運用便利化と機能拡張の両輪で短期・中期・長期・検討のみの改善候補をまとめた
+- ロードマップでは現行公開コマンドを `/setup` / `/status_config` / `/status_set` / `/status_clear` / `/status_view` に固定し、将来候補のコマンド案は「未実装の案」として区別して記載した
+- 短期項目には一覧表示、履歴、通知、設定変更プレビューを置き、中期以降には一括操作、export/import、テンプレート、任意遷移、例外ルール、期限調整などを整理した
 - `.codex/tasks/agents_md_update_proposal.md` を追加し、`AGENTS.md` と現行 repo 実態の食い違い、更新対象節、差分要点、置き換え文案をまとめた
 - 更新案では `bot.py` の役割を薄いエントリポイントへ修正し、`status_bot/`、`tests/`、`supervisor.sh`、`setenv.example.sh` を主要ファイルに含める方針を明記した
 - 更新案では旧 `違反` / 固定 3 段前提を、可変段階の `ステータス` モデルと legacy migration 前提に置き換える文案を用意した
@@ -129,6 +135,10 @@
 
 ## Verification
 
+- 実施: `find . -maxdepth 1 -type f | sort` / `rg -n "setup|status_config|status_set|status_clear|status_view|hold|stage_count" status_bot AGENTS.md tests` -> 現行機能と公開 I/F の根拠を確認
+- 実施: `sed -n '1,260p' status_bot/commands.py` / `sed -n '1,360p' status_bot/service.py` / `sed -n '1,420p' status_bot/store.py` / `sed -n '1,260p' status_bot/views.py` / `sed -n '1,220p' runbot.sh` / `sed -n '1,280p' supervisor.sh` -> ロードマップの現在地説明と制約の根拠を確認
+- 実施: `sed -n '1,320p' ロードマップ.md` -> 章構成と各候補の記述を確認
+- 実施: `rg -n "短期|中期|長期|検討のみ|/status_list|/status_history|/status_notify_config|/status_bulk_set|/status_export|任意遷移|例外ルール" ロードマップ.md` -> ロードマップの優先区分と主要候補が含まれることを確認
 - 実施: `sed -n '1,260p' AGENTS.md` / `sed -n '1,220p' bot.py` / `sed -n '1,260p' status_bot/app.py` / `sed -n '1,280p' status_bot/commands.py` / `sed -n '1,320p' status_bot/store.py` / `sed -n '1,360p' status_bot/service.py` / `sed -n '1,220p' runbot.sh` / `sed -n '1,260p' supervisor.sh` -> AGENTS.md の記述と現行構成の差分を確認
 - 実施: `find . -maxdepth 2 -type d | sort` / `find . -maxdepth 2 -type f | sort` -> `status_bot/` と `tests/` が repo の主要構成に含まれることを確認
 - 実施: `rg -n "violation|heavy|medium|light|status_set|status_clear|status_view|status_config|setup" status_bot tests bot.py AGENTS.md` -> AGENTS.md に旧 `違反` / 固定 3 段前提が残り、実装側は `status` モデル中心であることを確認
