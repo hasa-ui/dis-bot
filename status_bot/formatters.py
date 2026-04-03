@@ -36,6 +36,7 @@ from .validation import (
 
 STATUS_LIST_MESSAGE_LIMIT = 1900
 STATUS_HISTORY_MESSAGE_LIMIT = 1900
+NOTIFICATION_MESSAGE_LIMIT = 2000
 HISTORY_EVENT_LABELS = {
     HISTORY_EVENT_MANUAL_SET: "手動付与",
     HISTORY_EVENT_MANUAL_CLEAR: "手動解除",
@@ -206,6 +207,14 @@ def build_status_notify_config_message(
     lines.append(f"- 自動維持: {format_notification_toggle(config.notify_auto_hold)}")
     lines.append(f"- 設定変更: {format_notification_toggle(config.notify_config_change)}")
     return "\n".join(lines)
+
+
+def truncate_notification_message(content: str, limit: int = NOTIFICATION_MESSAGE_LIMIT) -> str:
+    if len(content) <= limit:
+        return content
+    if limit <= 3:
+        return content[:limit]
+    return content[: limit - 3] + "..."
 
 
 def shorten_reason(reason: str, limit: int = 80) -> str:

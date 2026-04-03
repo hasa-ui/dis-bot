@@ -185,6 +185,21 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<@300>", channel.messages[0])
         self.assertIn("<@77>", channel.messages[0])
 
+    async def test_assign_status_skips_notification_when_role_edit_fails(self) -> None:
+        self.store.set_stage_count_value(1, 1)
+        self.store.ensure_stage_rows(1, 1)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "警告", 11, days_to_seconds(1), ACTION_HOLD))
+        self.store.commit()
+
+        guild = FakeGuild(1, (11,), channel_ids=(900,), member_ids=(300,))
+        channel = self._configure_notifications(guild, notify_manual_set=True)
+        self.service.apply_status_role = AsyncMock(side_effect=RuntimeError("role edit failed"))
+
+        with self.assertRaises(RuntimeError):
+            await self.service.assign_status(1, SimpleNamespace(id=300), 1, "reason", SimpleNamespace(id=77))
+
+        self.assertEqual(channel.messages, [])
+
     async def test_clear_status_records_manual_clear_history(self) -> None:
         self.store.set_stage_count_value(1, 2)
         self.store.ensure_stage_rows(1, 2)
@@ -213,6 +228,23 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         channel = self._configure_notifications(guild, notify_manual_clear=True)
 
         await self.service.clear_status(1, FakeMember(401), "tester")
+
+        self.assertEqual(channel.messages, [])
+
+    async def test_clear_status_skips_notification_when_role_edit_fails(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 301, 2, now_ts() + 60, "manual-clear")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22), channel_ids=(900,), member_ids=(301,))
+        channel = self._configure_notifications(guild, notify_manual_clear=True)
+        self.service.apply_status_role = AsyncMock(side_effect=RuntimeError("role edit failed"))
+
+        with self.assertRaises(RuntimeError):
+            await self.service.clear_status(1, FakeMember(301), "tester")
 
         self.assertEqual(channel.messages, [])
 
@@ -250,6 +282,22 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("自動遷移", channel.messages[0])
         self.assertIn("段階2 -> 段階1", channel.messages[0])
 
+    async def test_reconcile_transition_skips_notification_when_role_edit_fails(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 302, 2, now_ts() - 1, "expired")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22), channel_ids=(900,), member_ids=(302,))
+        channel = self._configure_notifications(guild, notify_auto_transition=True)
+        self.service.apply_status_role = AsyncMock(side_effect=RuntimeError("role edit failed"))
+
+        await self.service.reconcile_record(self.store.get_status_record(1, 302))
+
+        self.assertEqual(channel.messages, [])
+
     async def test_hold_transition_sends_auto_hold_notification(self) -> None:
         self.store.set_stage_count_value(1, 1)
         self.store.ensure_stage_rows(1, 1)
@@ -281,6 +329,37 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(channel.messages), 1)
         self.assertIn("自動解除", channel.messages[0])
         self.assertIn("<@303>", channel.messages[0])
+
+    async def test_auto_clear_skips_notification_when_role_edit_fails(self) -> None:
+        self.store.set_stage_count_value(1, 1)
+        self.store.ensure_stage_rows(1, 1)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_record(1, 303, 1, now_ts() - 1, "expired")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11,), channel_ids=(900,), member_ids=(303,))
+        channel = self._configure_notifications(guild, notify_auto_transition=True)
+        self.service.apply_status_role = AsyncMock(side_effect=RuntimeError("role edit failed"))
+
+        await self.service.reconcile_record(self.store.get_status_record(1, 303))
+
+        self.assertEqual(channel.messages, [])
+
+    async def test_notification_truncates_long_reason_to_discord_limit(self) -> None:
+        self.store.set_stage_count_value(1, 1)
+        self.store.ensure_stage_rows(1, 1)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "警告", 11, days_to_seconds(1), ACTION_HOLD))
+        self.store.commit()
+
+        guild = FakeGuild(1, (11,), channel_ids=(900,), member_ids=(300,))
+        channel = self._configure_notifications(guild, notify_manual_set=True)
+        long_reason = "理" * 2500
+
+        await self.service.assign_status(1, SimpleNamespace(id=300), 1, long_reason, SimpleNamespace(id=77))
+
+        self.assertEqual(len(channel.messages), 1)
+        self.assertLessEqual(len(channel.messages[0]), 2000)
+        self.assertTrue(channel.messages[0].endswith("..."))
 
     async def test_status_history_uses_snapshot_stage_names_after_stage_rename(self) -> None:
         self.store.set_stage_count_value(1, 2)

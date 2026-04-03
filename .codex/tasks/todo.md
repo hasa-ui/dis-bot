@@ -129,6 +129,8 @@
 - `status_bot/commands.py` に `/status_notify_config` を追加し、現在設定の表示、部分更新、全無効化、通知先テキストチャンネルの権限確認を行えるようにした
 - `status_bot/formatters.py` に通知設定表示文面と、手動付与・手動解除・自動遷移・自動解除・自動維持・設定変更の通知文面 builder を追加した
 - `status_bot/service.py` に通知判定と送信 helper を追加し、`assign_status` / `clear_status` / `reconcile_record` / `save_stage_count_settings` / `save_stage_settings` から主要イベント通知を発火するようにした
+- `status_bot/service.py` では通知送信を role edit 成功後へ移し、失敗時に成功通知を出さないようにした
+- `status_bot/formatters.py` と `status_bot/service.py` では通知本文を送信直前に 2000 文字以内へ切り詰め、長い理由や詳細で Discord 制限超過になっても通知が落ちないようにした
 - `tests/test_store_migration.py` に通知設定テーブル作成と既定値取得の確認を追加した
 - `tests/test_commands.py` に `/status_notify_config` の表示、権限制御、チャンネル未指定エラー、部分更新、`disable_all` 制約の回帰テストを追加した
 - `tests/test_service_transitions.py` に手動付与、no-op 手動解除、自動遷移、`hold`、自動解除、設定変更の通知回帰テストを追加した
@@ -310,5 +312,9 @@
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 47 tests, OK
 - 実施: `git diff --stat` -> 変更が `status_bot` の通知設定実装、関連テスト、`タスクリスト.md`、`.codex/tasks/todo.md` に限定されていることを確認
+- 実施: `nl -ba status_bot/service.py | sed -n '130,230p'` / `nl -ba status_bot/service.py | sed -n '560,960p'` / `nl -ba status_bot/formatters.py | sed -n '180,320p'` -> 通知送信順序とメッセージ長制御の修正箇所を確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 52 tests, OK
+- 実施: `git diff --stat` -> 今回の追加差分が `status_bot/formatters.py`、`status_bot/service.py`、`tests/test_service_transitions.py` に限定されていることを確認
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため
