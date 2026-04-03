@@ -25,6 +25,14 @@ ACTION_LABELS = {
     ACTION_HOLD: "同じ段階を維持",
 }
 
+HISTORY_EVENT_MANUAL_SET = "manual_set"
+HISTORY_EVENT_MANUAL_CLEAR = "manual_clear"
+HISTORY_EVENT_AUTO_TRANSITION = "auto_transition"
+HISTORY_EVENT_AUTO_HOLD = "auto_hold"
+HISTORY_EVENT_AUTO_CLEAR = "auto_clear"
+HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED = "config_stage_count_saved"
+HISTORY_EVENT_CONFIG_STAGE_SAVED = "config_stage_saved"
+
 LEGACY_LEVEL_TO_STAGE = {
     "light": 1,
     "medium": 2,

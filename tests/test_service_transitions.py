@@ -20,6 +20,12 @@ class FakeRole:
         self.id = role_id
 
 
+class FakeMember:
+    def __init__(self, user_id: int, roles: tuple[FakeRole, ...] = ()) -> None:
+        self.id = user_id
+        self.roles = list(roles)
+
+
 class FakeGuild:
     def __init__(self, guild_id: int, role_ids: tuple[int, ...]) -> None:
         self.id = guild_id
@@ -54,6 +60,8 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["stage_index"], 1)
         self.assertIsNone(row["expires_at"])
+        history = self.store.get_status_history_for_member(1, 100)
+        self.assertEqual(history[0]["event_type"], "auto_hold")
 
     async def test_stage_count_shrink_retimes_clamped_records(self) -> None:
         self.store.set_stage_count_value(1, 5)
@@ -89,6 +97,114 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         row = await self.service.assign_status(1, member, 4, "reason", "tester")
         self.assertIsNotNone(row)
         self.assertEqual(row["stage_index"], 4)
+        history = self.store.get_status_history_for_member(1, 300)
+        self.assertEqual(history[0]["event_type"], "manual_set")
+        self.assertEqual(history[0]["reason"], "reason")
+
+    async def test_clear_status_records_manual_clear_history(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 301, 2, now_ts() + 60, "manual-clear")
+        self.store.commit()
+
+        member = SimpleNamespace(id=301)
+        await self.service.clear_status(1, member, "tester")
+
+        history = self.store.get_status_history_for_member(1, 301)
+        self.assertEqual(history[0]["event_type"], "manual_clear")
+        self.assertEqual(history[0]["from_stage_index"], 2)
+        self.assertEqual(history[0]["from_stage_name"], "段階2")
+        self.assertIsNone(history[0]["to_stage_index"])
+
+    async def test_reconcile_transition_records_auto_transition_history(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 302, 2, now_ts() - 1, "expired")
+        self.store.commit()
+
+        await self.service.reconcile_record(self.store.get_status_record(1, 302))
+
+        history = self.store.get_status_history_for_member(1, 302)
+        self.assertEqual(history[0]["event_type"], "auto_transition")
+        self.assertEqual(history[0]["from_stage_index"], 2)
+        self.assertEqual(history[0]["from_stage_name"], "段階2")
+        self.assertEqual(history[0]["to_stage_index"], 1)
+        self.assertEqual(history[0]["to_stage_name"], "段階1")
+
+    async def test_status_history_uses_snapshot_stage_names_after_stage_rename(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "旧名", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 302, 2, now_ts() - 1, "expired")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22))
+        guild.get_member = lambda user_id: SimpleNamespace(mention=f"<@{user_id}>")
+        await self.service.reconcile_record(self.store.get_status_record(1, 302))
+
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "更新後", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "新名", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.commit()
+
+        entries = await self.service.list_member_status_history(guild, 302)
+        self.assertEqual(entries[0].from_stage_name, "段階2（旧名）")
+        self.assertEqual(entries[0].to_stage_name, "段階1")
+
+    async def test_clear_status_without_active_record_skips_manual_clear_history(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.commit()
+
+        member = FakeMember(401)
+        await self.service.clear_status(1, member, "tester")
+
+        self.assertEqual(self.store.get_status_history_for_member(1, 401), [])
+
+    async def test_clear_status_records_manual_clear_history_for_stale_role_cleanup(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "警告", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.commit()
+
+        member = FakeMember(402, (FakeRole(22),))
+        await self.service.clear_status(1, member, "tester")
+
+        history = self.store.get_status_history_for_member(1, 402)
+        self.assertEqual(history[0]["event_type"], "manual_clear")
+        self.assertEqual(history[0]["from_stage_index"], 2)
+        self.assertEqual(history[0]["from_stage_name"], "段階2（警告）")
+
+    async def test_save_stage_settings_records_config_history(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.commit()
+
+        actor = SimpleNamespace(id=77)
+        await self.service.save_stage_settings(1, StatusStageConfig(2, "更新", 22, days_to_seconds(3), ACTION_NEXT), actor)
+
+        row = self.store.db.execute(
+            """
+            SELECT event_type, user_id, actor_user_id
+            FROM status_history_records
+            WHERE guild_id = ? AND event_type = 'config_stage_saved'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (1,),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertIsNone(row["user_id"])
+        self.assertEqual(row["actor_user_id"], 77)
 
     async def test_preview_stage_count_settings_reports_reapply_and_clamp_counts(self) -> None:
         self.store.set_stage_count_value(1, 4)
@@ -210,6 +326,22 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].member_display, "<@20>")
+
+    async def test_list_guild_status_records_does_not_mutate_overdue_rows(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 10, 1, now_ts() - 5, "expired")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22))
+        guild.get_member = lambda user_id: None
+        entries = await self.service.list_guild_status_records(guild)
+
+        self.assertEqual(entries, [])
+        self.assertIsNotNone(self.store.get_status_record(1, 10))
+        self.assertEqual(self.store.get_status_history_for_member(1, 10), [])
 
 
 if __name__ == "__main__":

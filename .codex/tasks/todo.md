@@ -1,5 +1,22 @@
 # TODO
 
+- [x] `/status_list` の一覧取得を非破壊化し、公開のまま自動遷移を強制できないようにする
+- [x] stale role cleanup 時の `manual_clear` 履歴を復元する
+- [x] 上記 2 件の回帰テストを追加し、構文検証と `unittest` を再実施する
+
+- [x] `/status_list` と `/status_history` の閲覧を誰でも可能にする
+- [x] 上記に合わせて権限制御テストを更新し、構文検証と `unittest` を再実施する
+
+- [x] `/status_history` を `Manage Roles` 必須に揃える
+- [x] 履歴に段階名スナップショット列を追加し、参照時は保存済み表示名を優先する
+- [x] active record がない `status_clear` では `manual_clear` 履歴を書かない
+- [x] 上記 3 件の回帰テストを追加し、構文検証と `unittest` を再実施する
+
+- [x] 履歴テーブルと履歴表示モデルを追加する
+- [x] service で手動操作・自動遷移・設定変更の履歴を記録する
+- [x] `/status_history` コマンドとページング表示を追加する
+- [x] 履歴まわりの回帰テストを追加し、構文検証と `unittest` を再実施する
+
 - [x] `/status_list` のページング View でも `Manage Roles` を再確認する
 - [x] 上記の回帰テストを追加し、構文検証と `unittest` を再実施する
 
@@ -251,5 +268,24 @@
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 24 tests, OK
 - 実施: `git diff -- status_bot/views.py tests/test_views.py .codex/tasks/todo.md .codex/tasks/lessons.md` -> `StatusListView` に `Manage Roles` 再確認と回帰テストだけが入っていることを確認
+- 実施: `rg -n "履歴|監査|status_history" -S タスクリスト.md ロードマップ.md status_bot tests` / `sed -n '1,340p' status_bot/store.py` / `sed -n '1,320p' status_bot/service.py` / `sed -n '1,280p' status_bot/commands.py` -> 履歴・監査ログの要求範囲、既存の保存経路、追加先の責務境界を確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 33 tests, OK
+- 実施: `git diff --stat` -> 変更が `status_bot` の履歴実装、関連テスト、`.codex/tasks/todo.md` に限定されていることを確認
+- 実施: `rg -n "HISTORY_EVENT_ROLE_APPLY_FAILED|role_apply_failed" status_bot tests .codex/tasks` -> 失敗イベント履歴の参照が残っていないことを確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 32 tests, OK
+- 実施: `rg -n "status_history|from_stage_name|to_stage_name|manual_clear" status_bot tests` / `sed -n '300,760p' status_bot/service.py` / `sed -n '380,460p' status_bot/store.py` -> `/status_history` の権限制御漏れ、履歴表示が current config 依存だった点、no-op `status_clear` でも履歴を書いていた点を確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 37 tests, OK
+- 実施: `git diff --stat` -> 変更が `status_history` 権限制御、履歴スナップショット列、no-op clear 抑止、関連テスト、`.codex/tasks/todo.md` に限定されていることを確認
+- 実施: `rg -n "status_list|status_history|has_manage_roles|Manage Roles 権限が必要です。" status_bot tests` -> 一覧/履歴の閲覧権限制御が command/view/test に残っている箇所を確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 34 tests, OK
+- 実施: `git diff --stat` -> 今回追加差分が `status_list` / `status_history` の公開化、関連テスト更新、`.codex/tasks/todo.md` に限定されていることを確認
+- 実施: `sed -n '300,760p' status_bot/service.py` / `rg -n "list_guild_status_records|clear_status|manual_clear" tests/test_service_transitions.py` -> `/status_list` が `reconcile_record()` を呼んでいたことと、stale role cleanup の履歴が落ちていたことを確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 36 tests, OK
+- 実施: `git diff --stat` -> 今回追加差分が `status_list` 非破壊化、stale cleanup の `manual_clear` 履歴復元、関連テスト、`.codex/tasks/todo.md` に限定されていることを確認
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため

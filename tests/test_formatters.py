@@ -5,11 +5,13 @@ from status_bot.config import ACTION_CLEAR, ACTION_NEXT
 from status_bot.formatters import (
     build_stage_count_preview_message,
     build_stage_save_preview_message,
+    build_status_history_message,
     build_status_list_message,
     build_status_config_message,
+    paginate_status_history_messages,
     paginate_status_list_messages,
 )
-from status_bot.models import GuildStatusConfig, SetupPreviewSummary, StatusListEntry, StatusStageConfig
+from status_bot.models import GuildStatusConfig, SetupPreviewSummary, StatusHistoryEntry, StatusListEntry, StatusStageConfig
 from status_bot.validation import days_to_seconds
 
 
@@ -119,6 +121,30 @@ class FormatterTests(unittest.TestCase):
         self.assertIn("<@10>: 段階2（警告） / 次回変更 1日後に 段階1へ移行 / 理由 確認用の理由", message)
         self.assertIn("<@20>: 段階1 / 次回変更 なし（現在の段階を維持中） / 理由 （なし）", message)
 
+    def test_build_status_history_message_contains_actor_and_detail(self) -> None:
+        message = build_status_history_message(
+            "<@10>",
+            [
+                StatusHistoryEntry(
+                    created_at=12345,
+                    event_type="manual_set",
+                    actor_display="<@99>",
+                    from_stage_name="段階1",
+                    to_stage_name="段階2（警告）",
+                    reason="確認用の理由",
+                    detail="手動更新",
+                )
+            ],
+            page_index=0,
+            page_count=1,
+            total_count=1,
+        )
+
+        self.assertIn("<@10> のステータス履歴", message)
+        self.assertIn("ページ: 1/1", message)
+        self.assertIn("全件数: 1件", message)
+        self.assertIn("手動付与 / 実行者 <@99> / 変更 段階1 -> 段階2（警告） / 理由 確認用の理由 / 詳細 手動更新", message)
+
     def test_paginate_status_list_messages_splits_before_discord_limit(self) -> None:
         entries = [
             StatusListEntry(
@@ -137,6 +163,27 @@ class FormatterTests(unittest.TestCase):
 
         self.assertGreater(len(pages), 1)
         self.assertTrue(all(len(page) <= 400 for page in pages))
+        self.assertIn(f"ページ: 1/{len(pages)}", pages[0])
+        self.assertIn(f"ページ: {len(pages)}/{len(pages)}", pages[-1])
+
+    def test_paginate_status_history_messages_splits_before_discord_limit(self) -> None:
+        entries = [
+            StatusHistoryEntry(
+                created_at=1000 + index,
+                event_type="manual_set",
+                actor_display=f"<@{index}>",
+                from_stage_name="段階2（" + ("警告" * 10) + "）",
+                to_stage_name="段階1",
+                reason="確認メモ" * 10,
+                detail="例外詳細" * 20,
+            )
+            for index in range(1, 6)
+        ]
+
+        pages = paginate_status_history_messages("<@10>", entries, max_length=500)
+
+        self.assertGreater(len(pages), 1)
+        self.assertTrue(all(len(page) <= 500 for page in pages))
         self.assertIn(f"ページ: 1/{len(pages)}", pages[0])
         self.assertIn(f"ページ: {len(pages)}/{len(pages)}", pages[-1])
 

@@ -34,3 +34,14 @@ class StatusListEntry:
     next_change_text: str
     reason: str
     expires_at: Optional[int]
+
+
+@dataclass(frozen=True)
+class StatusHistoryEntry:
+    created_at: int
+    event_type: str
+    actor_display: str
+    from_stage_name: Optional[str]
+    to_stage_name: Optional[str]
+    reason: str
+    detail: str

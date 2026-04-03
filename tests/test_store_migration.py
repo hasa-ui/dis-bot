@@ -7,6 +7,44 @@ from status_bot.store import StatusStore
 
 
 class StoreMigrationTests(unittest.TestCase):
+    def test_existing_history_table_gains_snapshot_columns(self) -> None:
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            db = sqlite3.connect(path)
+            db.execute(
+                """
+                CREATE TABLE status_history_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER,
+                    actor_user_id INTEGER,
+                    event_type TEXT NOT NULL,
+                    from_stage_index INTEGER,
+                    to_stage_index INTEGER,
+                    reason TEXT NOT NULL DEFAULT '',
+                    detail TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            db.commit()
+            db.close()
+
+            store = StatusStore(path)
+            try:
+                columns = {
+                    row["name"]
+                    for row in store.db.execute("PRAGMA table_info(status_history_records)").fetchall()
+                }
+                self.assertIn("from_stage_name", columns)
+                self.assertIn("to_stage_name", columns)
+            finally:
+                store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
     def test_legacy_rows_migrate_into_status_tables(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -50,6 +88,11 @@ class StoreMigrationTests(unittest.TestCase):
 
             store = StatusStore(path)
             try:
+                history_table = store.db.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'status_history_records'"
+                ).fetchone()
+                self.assertIsNotNone(history_table)
+
                 config = store.get_status_config(1)
                 self.assertIsNotNone(config)
                 self.assertEqual(config.stage_count, 3)
@@ -58,6 +101,7 @@ class StoreMigrationTests(unittest.TestCase):
                 row = store.get_status_record(1, 99)
                 self.assertIsNotNone(row)
                 self.assertEqual(row["stage_index"], 3)
+                self.assertEqual(store.get_status_history_for_member(1, 99), [])
             finally:
                 store.close()
         finally:

@@ -12,7 +12,7 @@ from .formatters import (
 )
 from .permissions import can_manage_target, has_manage_guild, has_manage_roles
 from .validation import default_stage_name, get_stage, stage_path_is_ready
-from .views import SetupHomeView, StatusListView
+from .views import SetupHomeView, StatusHistoryView, StatusListView
 
 if TYPE_CHECKING:
     from .app import StatusBot
@@ -203,9 +203,6 @@ def register_commands(bot: "StatusBot") -> None:
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
             return
-        if not has_manage_roles(interaction):
-            await interaction.response.send_message("Manage Roles 権限が必要です。", ephemeral=True)
-            return
 
         await interaction.response.defer(ephemeral=True)
         try:
@@ -222,6 +219,26 @@ def register_commands(bot: "StatusBot") -> None:
             return
 
         view = StatusListView(interaction.user.id, entries)
+        await interaction.edit_original_response(content=view.render_content(), view=view)
+        await view.bind_message(interaction)
+
+    @bot.tree.command(name="status_history", description="対象メンバーのステータス履歴を確認します")
+    @app_commands.describe(member="対象メンバー")
+    async def status_history(interaction: discord.Interaction, member: discord.Member) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        entries = await bot.service.list_member_status_history(interaction.guild, member.id)
+        if not entries:
+            await interaction.edit_original_response(
+                content=f"{member.mention} のステータス履歴はありません。",
+                view=None,
+            )
+            return
+
+        view = StatusHistoryView(interaction.user.id, member.mention, entries)
         await interaction.edit_original_response(content=view.render_content(), view=view)
         await view.bind_message(interaction)
 
