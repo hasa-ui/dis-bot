@@ -1,5 +1,8 @@
 # TODO
 
+- [x] `/setup` の保存前プレビュー向け集計モデルと service helper を追加する
+- [x] `/setup` の段階数保存・段階保存を確認付きプレビュー画面経由へ変更する
+- [x] プレビュー文言と回帰テストを追加し、構文検証と `unittest` 結果を追記する
 - [x] `ロードマップ.md` をもとに `タスクリスト.md` の対象範囲と優先順を整理する
 - [x] repo ルートに `タスクリスト.md` を追加し、短期ロードマップを実装単位のチェックリストへ落とす
 - [x] `タスクリスト.md` に既存公開 I/F、短期追加候補、後続候補、検証観点をまとめる
@@ -75,6 +78,7 @@
 
 - `.codex/tasks` ディレクトリが存在しなかったため新規作成した
 - 今回の `タスクリスト.md` 作成では未解決事項は残っていない
+- 今回の `/setup` 保存前プレビュー実装では未解決事項は残っていない
 
 ## Changes
 
@@ -139,9 +143,18 @@
 - `タスクリスト.md` を新規追加し、`ロードマップ.md` の短期ロードマップを今回の実行対象として実装単位のチェックリストへ落とし込んだ
 - `タスクリスト.md` では優先軸に合わせて `/setup` 保存前プレビュー、`/status_list`、履歴・監査ログ、通知設定の順に並べ、既存公開 I/F と追加候補を分けて明記した
 - `タスクリスト.md` の末尾に中期・長期ロードマップを「後続候補」として残し、今回対象外であることを明示した
+- `status_bot/models.py` に `SetupPreviewSummary` を追加し、`status_bot/store.py` / `status_bot/service.py` に active record 件数・丸め件数・見つからないロール件数を事前算出する preview helper を追加した
+- `status_bot/views.py` の `/setup` 保存経路を即保存から確認付きプレビューへ変更し、段階数変更は `StageCountPreviewView`、段階設定変更は `StageSavePreviewView` を経由して再検証後にだけ保存するようにした
+- `status_bot/views.py` では編集中のロール保持を `discord.Role` オブジェクトではなく `selected_role_id` 基準へ切り替え、削除済みロールを保存前に再解決する形へそろえた
+- `status_bot/formatters.py` に段階数変更プレビュー文面、段階保存プレビュー文面、共通の件数サマリー文言を追加した
+- `tests/test_service_transitions.py` と `tests/test_formatters.py` に preview helper と preview message の回帰テストを追加し、`unittest` 件数を 13 件へ増やした
 
 ## Verification
 
+- 実施: `git status --short` -> 実装前 worktree が clean であることを確認
+- 実施: `sed -n '1,220p' status_bot/views.py` / `sed -n '220,420p' status_bot/views.py` / `sed -n '1,260p' status_bot/formatters.py` / `rg -n "save_stage_count_settings|save_stage_settings|refresh_guild_status_roles|count_records_above_stage|clamp_records_to_stage|build_.*message" status_bot` -> `/setup` の現行保存フローとプレビュー導入箇所を確認
+- 実施: `sed -n '1,220p' status_bot/models.py` / `sed -n '1,220p' status_bot/validation.py` / `sed -n '1,260p' tests/test_formatters.py` / `sed -n '1,320p' tests/test_service_transitions.py` -> 追加すべき内部モデルと既存テストの足場を確認
+- 実施: `rg -n "selected_role\\b|selected_role_id|preview_stage_|StageCountPreviewView|StageSavePreviewView|build_stage_count_preview_message|build_stage_save_preview_message" status_bot/views.py status_bot/service.py status_bot/formatters.py tests` -> 参照崩れなく preview 導線が追加されたことを確認
 - 実施: `git status --short` -> 編集前 worktree が clean であることを確認
 - 実施: `sed -n '1,220p' ロードマップ.md` / `sed -n '1,220p' AGENTS.md` -> `タスクリスト.md` に反映すべき優先軸、既存 I/F、検証方針、制約を再確認
 - 実施: `find . -maxdepth 1 -type f | sort` / `rg -n "setup|status_config|status_set|status_clear|status_view|hold|stage_count" status_bot AGENTS.md tests` -> 現行機能と公開 I/F の根拠を確認
@@ -189,5 +202,8 @@
 - 実施: 旧設定ロール ID を `refresh_guild_violation_roles(..., remove_role_ids=previous_role_ids)` 経由で再適用時に除去することをコード上で確認
 - 実施: `/setup` から既存保存 helper を呼ぶ構成になっていること、`config_show` / 未設定エラーが `/setup` 優先文言になっていることをコード上で確認
 - 実施: `sed -n '1,240p' タスクリスト.md` / `rg -n "/setup|/status_list|/status_history|/status_notify_config|後続候補|python -m py_compile|python -m unittest" タスクリスト.md` -> 新規文書に対象範囲、優先順、追加候補、検証観点が入っていることを確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 13 tests, OK
+- 実施: `git diff --stat` -> 変更が `.codex/tasks/todo.md`、`status_bot/` の setup 周辺、関連テストに限定されていることを確認
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため

@@ -4,10 +4,11 @@ import discord
 
 from .config import ACTION_CLEAR, ACTION_HOLD, SETUP_GUIDANCE, logger
 from .formatters import stage_display_name
-from .models import StatusStageConfig
+from .models import GuildStatusConfig, SetupPreviewSummary, StatusStageConfig
 from .store import StatusStore
 from .validation import (
     configured_role_ids,
+    default_stage_config,
     get_stage,
     is_stage_ready,
     now_ts,
@@ -20,6 +21,90 @@ class StatusService:
     def __init__(self, bot: discord.Client, store: StatusStore) -> None:
         self.bot = bot
         self.store = store
+
+    def _count_missing_roles(self, guild: discord.Guild, config: GuildStatusConfig) -> int:
+        return sum(
+            1
+            for stage in config.stages
+            if stage.role_id is not None and guild.get_role(stage.role_id) is None
+        )
+
+    def _build_stage_count_preview_config(
+        self,
+        guild_id: int,
+        previous: Optional[GuildStatusConfig],
+        stage_count: int,
+    ) -> GuildStatusConfig:
+        stages = [
+            get_stage(previous, idx) if previous is not None else None
+            for idx in range(1, stage_count + 1)
+        ]
+        return GuildStatusConfig(
+            guild_id=guild_id,
+            stage_count=stage_count,
+            stages=[stage or default_stage_config(idx) for idx, stage in enumerate(stages, start=1)],
+        )
+
+    def _build_stage_preview_config(
+        self,
+        config: GuildStatusConfig,
+        replacement: StatusStageConfig,
+    ) -> GuildStatusConfig:
+        return GuildStatusConfig(
+            guild_id=config.guild_id,
+            stage_count=config.stage_count,
+            stages=[
+                replacement if stage.stage_index == replacement.stage_index else stage
+                for stage in config.stages
+            ],
+        )
+
+    def preview_stage_count_settings(
+        self,
+        guild: discord.Guild,
+        stage_count: int,
+    ) -> SetupPreviewSummary:
+        previous = self.store.get_status_config(guild.id)
+        clamp_count = 0
+        if previous is not None and stage_count < previous.stage_count:
+            clamp_count = self.store.count_records_above_stage(guild.id, stage_count)
+            if clamp_count > 0:
+                target_stage = get_stage(previous, stage_count)
+                if not is_stage_ready(target_stage):
+                    raise ValueError(
+                        f"段階数を {stage_count} に減らす前に 段階{stage_count} を設定してください。"
+                    )
+
+        projected = self._build_stage_count_preview_config(guild.id, previous, stage_count)
+        return SetupPreviewSummary(
+            reapply_count=self.store.count_active_records_by_guild(guild.id),
+            clamp_count=clamp_count,
+            missing_role_count=self._count_missing_roles(guild, projected),
+        )
+
+    def preview_stage_settings(
+        self,
+        guild: discord.Guild,
+        stage: StatusStageConfig,
+    ) -> SetupPreviewSummary:
+        config = self.store.get_status_config(guild.id)
+        if config is None:
+            raise ValueError("先に段階数を設定してください。")
+        if not 1 <= stage.stage_index <= config.stage_count:
+            raise ValueError("存在しない段階です。")
+
+        validate_stage_configuration(config, stage)
+        if stage.role_id is not None and guild.get_role(stage.role_id) is None:
+            raise ValueError(
+                f"{stage_display_name(stage)} のロールが見つかりません。設定を見直してください。"
+            )
+
+        projected = self._build_stage_preview_config(config, stage)
+        return SetupPreviewSummary(
+            reapply_count=self.store.count_active_records_by_guild(guild.id),
+            clamp_count=0,
+            missing_role_count=self._count_missing_roles(guild, projected),
+        )
 
     async def fetch_member_if_needed(self, guild_id: int, user_id: int) -> Optional[discord.Member]:
         guild = self.bot.get_guild(guild_id)
