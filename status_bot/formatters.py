@@ -17,7 +17,14 @@ from .config import (
     SETUP_GUIDANCE,
     VALID_EXPIRE_ACTIONS,
 )
-from .models import GuildStatusConfig, SetupPreviewSummary, StatusHistoryEntry, StatusListEntry, StatusStageConfig
+from .models import (
+    GuildStatusConfig,
+    GuildStatusNotificationConfig,
+    SetupPreviewSummary,
+    StatusHistoryEntry,
+    StatusListEntry,
+    StatusStageConfig,
+)
 from .validation import (
     config_complete,
     default_stage_name,
@@ -169,6 +176,35 @@ def build_status_config_message(guild: discord.Guild, config: Optional[GuildStat
         lines.append(f"- 未設定項目: {', '.join(missing)}")
         lines.append(f"設定変更は {SETUP_GUIDANCE}")
 
+    return "\n".join(lines)
+
+
+def format_notification_channel(channel_id: Optional[int]) -> str:
+    if channel_id is None:
+        return "未設定"
+    return f"<#{channel_id}>"
+
+
+def format_notification_toggle(enabled: bool) -> str:
+    return "ON" if enabled else "OFF"
+
+
+def build_status_notify_config_message(
+    config: GuildStatusNotificationConfig,
+    *,
+    notice: Optional[str] = None,
+) -> str:
+    lines = ["現在の通知設定"]
+    if notice:
+        lines.append(notice)
+        lines.append("")
+
+    lines.append(f"- 通知先チャンネル: {format_notification_channel(config.channel_id)}")
+    lines.append(f"- 手動付与: {format_notification_toggle(config.notify_manual_set)}")
+    lines.append(f"- 手動解除: {format_notification_toggle(config.notify_manual_clear)}")
+    lines.append(f"- 自動遷移・自動解除: {format_notification_toggle(config.notify_auto_transition)}")
+    lines.append(f"- 自動維持: {format_notification_toggle(config.notify_auto_hold)}")
+    lines.append(f"- 設定変更: {format_notification_toggle(config.notify_config_change)}")
     return "\n".join(lines)
 
 
@@ -413,6 +449,101 @@ def build_stage_save_message(stage: StatusStageConfig, refreshed: int, failed: i
         f"- 期間: {format_duration_setting(stage.duration_seconds)}\n"
         f"- 満了時: {ACTION_LABELS[stage.on_expire_action]}\n"
         f"- 既存ステータス保持者への再適用: {refreshed}件中 {failed}件失敗"
+    )
+
+
+def build_manual_set_notification(
+    member_display: str,
+    stage_name: str,
+    next_change_text: str,
+    *,
+    reason: str,
+    actor_display: str,
+) -> str:
+    return (
+        "ステータス通知: 手動付与\n"
+        f"- 対象: {member_display}\n"
+        f"- 現在: {stage_name}\n"
+        f"- 次回変更: {next_change_text}\n"
+        f"- 理由: {reason or '（なし）'}\n"
+        f"- 実行者: {actor_display}"
+    )
+
+
+def build_manual_clear_notification(
+    member_display: str,
+    from_stage_name: Optional[str],
+    *,
+    reason: str,
+    actor_display: str,
+) -> str:
+    return (
+        "ステータス通知: 手動解除\n"
+        f"- 対象: {member_display}\n"
+        f"- 解除前: {from_stage_name or '不明'}\n"
+        f"- 理由: {reason or '（なし）'}\n"
+        f"- 実行者: {actor_display}"
+    )
+
+
+def build_auto_transition_notification(
+    member_display: str,
+    from_stage_name: Optional[str],
+    to_stage_name: Optional[str],
+    next_change_text: str,
+    *,
+    reason: str,
+) -> str:
+    return (
+        "ステータス通知: 自動遷移\n"
+        f"- 対象: {member_display}\n"
+        f"- 変更: {from_stage_name or '不明'} -> {to_stage_name or '不明'}\n"
+        f"- 次回変更: {next_change_text}\n"
+        f"- 理由: {reason or '（なし）'}"
+    )
+
+
+def build_auto_hold_notification(
+    member_display: str,
+    stage_name: Optional[str],
+    *,
+    reason: str,
+) -> str:
+    return (
+        "ステータス通知: 自動維持\n"
+        f"- 対象: {member_display}\n"
+        f"- 現在: {stage_name or '不明'}\n"
+        f"- 次回変更: なし（現在の段階を維持中）\n"
+        f"- 理由: {reason or '（なし）'}"
+    )
+
+
+def build_auto_clear_notification(
+    member_display: str,
+    from_stage_name: Optional[str],
+    *,
+    reason: str,
+) -> str:
+    return (
+        "ステータス通知: 自動解除\n"
+        f"- 対象: {member_display}\n"
+        f"- 解除前: {from_stage_name or '不明'}\n"
+        f"- 理由: {reason or '（なし）'}"
+    )
+
+
+def build_config_change_notification(
+    detail: str,
+    *,
+    actor_display: str,
+    refreshed: int,
+    failed: int,
+) -> str:
+    return (
+        "ステータス通知: 設定変更\n"
+        f"- 内容: {detail}\n"
+        f"- 既存ステータス保持者への再適用: {refreshed}件中 {failed}件失敗\n"
+        f"- 実行者: {actor_display}"
     )
 
 

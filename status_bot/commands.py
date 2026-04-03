@@ -5,11 +5,13 @@ from discord import app_commands
 
 from .config import MAX_STAGE_COUNT, SETUP_GUIDANCE, logger
 from .formatters import (
+    build_status_notify_config_message,
     build_setup_home_message,
     build_status_config_message,
     describe_record_next_change,
     stage_display_name,
 )
+from .models import GuildStatusNotificationConfig
 from .permissions import can_manage_target, has_manage_guild, has_manage_roles
 from .validation import default_stage_name, get_stage, stage_path_is_ready
 from .views import SetupHomeView, StatusHistoryView, StatusListView
@@ -46,6 +48,126 @@ def register_commands(bot: "StatusBot") -> None:
             return
         await interaction.response.send_message(
             build_status_config_message(interaction.guild, bot.store.get_status_config(interaction.guild.id)),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="status_notify_config", description="このサーバーの通知設定を表示または更新します")
+    @app_commands.describe(
+        channel="通知先テキストチャンネル",
+        manual_set="手動付与を通知するか",
+        manual_clear="手動解除を通知するか",
+        auto_transition="自動遷移と自動解除を通知するか",
+        auto_hold="期限満了後の維持を通知するか",
+        config_change="設定変更を通知するか",
+        disable_all="通知先と全通知をまとめて無効化するか",
+    )
+    async def status_notify_config(
+        interaction: discord.Interaction,
+        channel: Optional[discord.TextChannel] = None,
+        manual_set: Optional[bool] = None,
+        manual_clear: Optional[bool] = None,
+        auto_transition: Optional[bool] = None,
+        auto_hold: Optional[bool] = None,
+        config_change: Optional[bool] = None,
+        disable_all: bool = False,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+        if not has_manage_guild(interaction):
+            await interaction.response.send_message(
+                "Manage Server 権限か管理者権限が必要です。",
+                ephemeral=True,
+            )
+            return
+
+        updates_requested = (
+            channel is not None
+            or manual_set is not None
+            or manual_clear is not None
+            or auto_transition is not None
+            or auto_hold is not None
+            or config_change is not None
+            or disable_all
+        )
+        current = bot.store.get_status_notification_config(interaction.guild.id)
+        if not updates_requested:
+            await interaction.response.send_message(
+                build_status_notify_config_message(current),
+                ephemeral=True,
+            )
+            return
+
+        if disable_all and any(
+            value is not None
+            for value in (channel, manual_set, manual_clear, auto_transition, auto_hold, config_change)
+        ):
+            await interaction.response.send_message(
+                "`disable_all` を使うときは他の更新引数を同時指定できません。",
+                ephemeral=True,
+            )
+            return
+
+        if disable_all:
+            updated = GuildStatusNotificationConfig(
+                guild_id=interaction.guild.id,
+                channel_id=None,
+                notify_manual_set=False,
+                notify_manual_clear=False,
+                notify_auto_transition=False,
+                notify_auto_hold=False,
+                notify_config_change=False,
+            )
+        else:
+            updated = GuildStatusNotificationConfig(
+                guild_id=interaction.guild.id,
+                channel_id=channel.id if channel is not None else current.channel_id,
+                notify_manual_set=current.notify_manual_set if manual_set is None else manual_set,
+                notify_manual_clear=current.notify_manual_clear if manual_clear is None else manual_clear,
+                notify_auto_transition=(
+                    current.notify_auto_transition if auto_transition is None else auto_transition
+                ),
+                notify_auto_hold=current.notify_auto_hold if auto_hold is None else auto_hold,
+                notify_config_change=current.notify_config_change if config_change is None else config_change,
+            )
+
+        enabled = (
+            updated.notify_manual_set
+            or updated.notify_manual_clear
+            or updated.notify_auto_transition
+            or updated.notify_auto_hold
+            or updated.notify_config_change
+        )
+        if enabled and updated.channel_id is None:
+            await interaction.response.send_message(
+                "通知を有効化する場合は通知先テキストチャンネルを指定してください。",
+                ephemeral=True,
+            )
+            return
+
+        if channel is not None:
+            me = interaction.guild.me
+            if me is None:
+                await interaction.response.send_message(
+                    "Botのメンバー情報が取得できません。",
+                    ephemeral=True,
+                )
+                return
+            perms = channel.permissions_for(me)
+            if not perms.view_channel or not perms.send_messages:
+                await interaction.response.send_message(
+                    "指定チャンネルへ通知できません。Bot の View Channel / Send Messages 権限を確認してください。",
+                    ephemeral=True,
+                )
+                return
+
+        bot.store.upsert_status_notification_config(updated)
+        bot.store.commit()
+        await interaction.response.send_message(
+            build_status_notify_config_message(
+                updated,
+                notice="通知設定を保存しました。",
+            ),
             ephemeral=True,
         )
 

@@ -2,7 +2,7 @@ import sqlite3
 from typing import Optional
 
 from .config import LEGACY_LEVEL_TO_STAGE
-from .models import GuildStatusConfig, StatusStageConfig
+from .models import GuildStatusConfig, GuildStatusNotificationConfig, StatusStageConfig
 from .validation import default_stage_config, now_ts
 
 
@@ -91,6 +91,20 @@ class StatusStore:
                 reason           TEXT NOT NULL DEFAULT '',
                 detail           TEXT NOT NULL DEFAULT '',
                 created_at       INTEGER NOT NULL
+            )
+            """
+        )
+        self.db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS guild_status_notifications (
+                guild_id                INTEGER PRIMARY KEY,
+                channel_id              INTEGER,
+                notify_manual_set       INTEGER NOT NULL DEFAULT 0,
+                notify_manual_clear     INTEGER NOT NULL DEFAULT 0,
+                notify_auto_transition  INTEGER NOT NULL DEFAULT 0,
+                notify_auto_hold        INTEGER NOT NULL DEFAULT 0,
+                notify_config_change    INTEGER NOT NULL DEFAULT 0,
+                updated_at              INTEGER NOT NULL
             )
             """
         )
@@ -203,6 +217,78 @@ class StatusStore:
 
     def commit(self) -> None:
         self.db.commit()
+
+    def get_status_notification_config(self, guild_id: int) -> GuildStatusNotificationConfig:
+        row = self.db.execute(
+            """
+            SELECT
+                guild_id,
+                channel_id,
+                notify_manual_set,
+                notify_manual_clear,
+                notify_auto_transition,
+                notify_auto_hold,
+                notify_config_change
+            FROM guild_status_notifications
+            WHERE guild_id = ?
+            """,
+            (guild_id,),
+        ).fetchone()
+        if row is None:
+            return GuildStatusNotificationConfig(
+                guild_id=guild_id,
+                channel_id=None,
+                notify_manual_set=False,
+                notify_manual_clear=False,
+                notify_auto_transition=False,
+                notify_auto_hold=False,
+                notify_config_change=False,
+            )
+
+        return GuildStatusNotificationConfig(
+            guild_id=row["guild_id"],
+            channel_id=row["channel_id"],
+            notify_manual_set=bool(row["notify_manual_set"]),
+            notify_manual_clear=bool(row["notify_manual_clear"]),
+            notify_auto_transition=bool(row["notify_auto_transition"]),
+            notify_auto_hold=bool(row["notify_auto_hold"]),
+            notify_config_change=bool(row["notify_config_change"]),
+        )
+
+    def upsert_status_notification_config(self, config: GuildStatusNotificationConfig) -> None:
+        self.db.execute(
+            """
+            INSERT INTO guild_status_notifications (
+                guild_id,
+                channel_id,
+                notify_manual_set,
+                notify_manual_clear,
+                notify_auto_transition,
+                notify_auto_hold,
+                notify_config_change,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET
+                channel_id = excluded.channel_id,
+                notify_manual_set = excluded.notify_manual_set,
+                notify_manual_clear = excluded.notify_manual_clear,
+                notify_auto_transition = excluded.notify_auto_transition,
+                notify_auto_hold = excluded.notify_auto_hold,
+                notify_config_change = excluded.notify_config_change,
+                updated_at = excluded.updated_at
+            """,
+            (
+                config.guild_id,
+                config.channel_id,
+                int(config.notify_manual_set),
+                int(config.notify_manual_clear),
+                int(config.notify_auto_transition),
+                int(config.notify_auto_hold),
+                int(config.notify_config_change),
+                now_ts(),
+            ),
+        )
 
     def get_status_config(self, guild_id: int) -> Optional[GuildStatusConfig]:
         settings_row = self.db.execute(

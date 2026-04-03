@@ -102,6 +102,19 @@ class StoreMigrationTests(unittest.TestCase):
                 self.assertIsNotNone(row)
                 self.assertEqual(row["stage_index"], 3)
                 self.assertEqual(store.get_status_history_for_member(1, 99), [])
+
+                notify_table = store.db.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'guild_status_notifications'"
+                ).fetchone()
+                self.assertIsNotNone(notify_table)
+
+                notify_config = store.get_status_notification_config(1)
+                self.assertIsNone(notify_config.channel_id)
+                self.assertFalse(notify_config.notify_manual_set)
+                self.assertFalse(notify_config.notify_manual_clear)
+                self.assertFalse(notify_config.notify_auto_transition)
+                self.assertFalse(notify_config.notify_auto_hold)
+                self.assertFalse(notify_config.notify_config_change)
             finally:
                 store.close()
         finally:
