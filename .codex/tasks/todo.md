@@ -1,5 +1,10 @@
 # TODO
 
+- [x] 履歴テーブルと履歴表示モデルを追加する
+- [x] service で手動操作・自動遷移・設定変更の履歴を記録する
+- [x] `/status_history` コマンドとページング表示を追加する
+- [x] 履歴まわりの回帰テストを追加し、構文検証と `unittest` を再実施する
+
 - [x] `/status_list` のページング View でも `Manage Roles` を再確認する
 - [x] 上記の回帰テストを追加し、構文検証と `unittest` を再実施する
 
@@ -251,5 +256,12 @@
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 24 tests, OK
 - 実施: `git diff -- status_bot/views.py tests/test_views.py .codex/tasks/todo.md .codex/tasks/lessons.md` -> `StatusListView` に `Manage Roles` 再確認と回帰テストだけが入っていることを確認
+- 実施: `rg -n "履歴|監査|status_history" -S タスクリスト.md ロードマップ.md status_bot tests` / `sed -n '1,340p' status_bot/store.py` / `sed -n '1,320p' status_bot/service.py` / `sed -n '1,280p' status_bot/commands.py` -> 履歴・監査ログの要求範囲、既存の保存経路、追加先の責務境界を確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 33 tests, OK
+- 実施: `git diff --stat` -> 変更が `status_bot` の履歴実装、関連テスト、`.codex/tasks/todo.md` に限定されていることを確認
+- 実施: `rg -n "HISTORY_EVENT_ROLE_APPLY_FAILED|role_apply_failed" status_bot tests .codex/tasks` -> 失敗イベント履歴の参照が残っていないことを確認
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 32 tests, OK
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため

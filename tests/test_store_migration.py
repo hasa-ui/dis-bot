@@ -50,6 +50,11 @@ class StoreMigrationTests(unittest.TestCase):
 
             store = StatusStore(path)
             try:
+                history_table = store.db.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'status_history_records'"
+                ).fetchone()
+                self.assertIsNotNone(history_table)
+
                 config = store.get_status_config(1)
                 self.assertIsNotNone(config)
                 self.assertEqual(config.stage_count, 3)
@@ -58,6 +63,7 @@ class StoreMigrationTests(unittest.TestCase):
                 row = store.get_status_record(1, 99)
                 self.assertIsNotNone(row)
                 self.assertEqual(row["stage_index"], 3)
+                self.assertEqual(store.get_status_history_for_member(1, 99), [])
             finally:
                 store.close()
         finally:

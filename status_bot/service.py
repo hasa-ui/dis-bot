@@ -2,9 +2,21 @@ from typing import Optional
 
 import discord
 
-from .config import ACTION_CLEAR, ACTION_HOLD, SETUP_GUIDANCE, logger
+from .config import (
+    ACTION_CLEAR,
+    ACTION_HOLD,
+    HISTORY_EVENT_AUTO_CLEAR,
+    HISTORY_EVENT_AUTO_HOLD,
+    HISTORY_EVENT_AUTO_TRANSITION,
+    HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
+    HISTORY_EVENT_CONFIG_STAGE_SAVED,
+    HISTORY_EVENT_MANUAL_CLEAR,
+    HISTORY_EVENT_MANUAL_SET,
+    SETUP_GUIDANCE,
+    logger,
+)
 from .formatters import describe_record_next_change, stage_display_name
-from .models import GuildStatusConfig, SetupPreviewSummary, StatusListEntry, StatusStageConfig
+from .models import GuildStatusConfig, SetupPreviewSummary, StatusHistoryEntry, StatusListEntry, StatusStageConfig
 from .store import StatusStore
 from .validation import (
     configured_role_ids,
@@ -21,6 +33,50 @@ class StatusService:
     def __init__(self, bot: discord.Client, store: StatusStore) -> None:
         self.bot = bot
         self.store = store
+
+    def _actor_user_id(self, actor: object) -> Optional[int]:
+        actor_id = getattr(actor, "id", None)
+        return actor_id if isinstance(actor_id, int) else None
+
+    def _record_history(
+        self,
+        guild_id: int,
+        *,
+        user_id: Optional[int],
+        actor: Optional[object],
+        event_type: str,
+        from_stage_index: Optional[int],
+        to_stage_index: Optional[int],
+        reason: str = "",
+        detail: str = "",
+    ) -> None:
+        self.store.append_status_history(
+            guild_id,
+            user_id=user_id,
+            actor_user_id=self._actor_user_id(actor) if actor is not None else None,
+            event_type=event_type,
+            from_stage_index=from_stage_index,
+            to_stage_index=to_stage_index,
+            reason=reason,
+            detail=detail,
+        )
+
+    def _resolve_history_stage_name(
+        self,
+        config: Optional[GuildStatusConfig],
+        stage_index: Optional[int],
+    ) -> Optional[str]:
+        if stage_index is None:
+            return None
+        stage = get_stage(config, stage_index) if config is not None else None
+        return stage_display_name(stage or default_stage_config(stage_index))
+
+    def _resolve_actor_display(self, guild: discord.Guild, actor_user_id: Optional[int]) -> str:
+        if actor_user_id is None:
+            return "システム"
+
+        member = guild.get_member(actor_user_id)
+        return member.mention if member is not None else f"<@{actor_user_id}>"
 
     def _predict_reconciled_record(
         self,
@@ -254,6 +310,25 @@ class StatusService:
         )
         return entries
 
+    async def list_member_status_history(
+        self,
+        guild: discord.Guild,
+        user_id: int,
+    ) -> list[StatusHistoryEntry]:
+        config = self.store.get_status_config(guild.id)
+        return [
+            StatusHistoryEntry(
+                created_at=row["created_at"],
+                event_type=row["event_type"],
+                actor_display=self._resolve_actor_display(guild, row["actor_user_id"]),
+                from_stage_name=self._resolve_history_stage_name(config, row["from_stage_index"]),
+                to_stage_name=self._resolve_history_stage_name(config, row["to_stage_index"]),
+                reason=row["reason"] or "",
+                detail=row["detail"] or "",
+            )
+            for row in self.store.get_status_history_for_member(guild.id, user_id)
+        ]
+
     async def apply_status_role(
         self,
         guild_id: int,
@@ -302,6 +377,7 @@ class StatusService:
         guild_id = row["guild_id"]
         user_id = row["user_id"]
         stage_index = row["stage_index"]
+        original_stage_index = stage_index
         expires_at = row["expires_at"]
         reason = row["reason"]
 
@@ -327,6 +403,16 @@ class StatusService:
 
             if current_stage.on_expire_action == ACTION_CLEAR:
                 self.store.delete_status_record(guild_id, user_id)
+                self._record_history(
+                    guild_id,
+                    user_id=user_id,
+                    actor=None,
+                    event_type=HISTORY_EVENT_AUTO_CLEAR,
+                    from_stage_index=stage_index,
+                    to_stage_index=None,
+                    reason=reason,
+                    detail="期限満了により解除",
+                )
                 self.store.commit()
                 try:
                     await self.apply_status_role(guild_id, user_id, None, reason="Status expired -> cleared")
@@ -338,6 +424,16 @@ class StatusService:
 
             if current_stage.on_expire_action == ACTION_HOLD:
                 self.store.upsert_status_record(guild_id, user_id, stage_index, None, reason)
+                self._record_history(
+                    guild_id,
+                    user_id=user_id,
+                    actor=None,
+                    event_type=HISTORY_EVENT_AUTO_HOLD,
+                    from_stage_index=stage_index,
+                    to_stage_index=stage_index,
+                    reason=reason,
+                    detail="期限満了により同じ段階を維持",
+                )
                 self.store.commit()
                 try:
                     await self.apply_status_role(
@@ -370,6 +466,16 @@ class StatusService:
             return
 
         self.store.upsert_status_record(guild_id, user_id, stage_index, expires_at, reason)
+        self._record_history(
+            guild_id,
+            user_id=user_id,
+            actor=None,
+            event_type=HISTORY_EVENT_AUTO_TRANSITION,
+            from_stage_index=original_stage_index,
+            to_stage_index=stage_index,
+            reason=reason,
+            detail="期限満了により自動遷移",
+        )
         self.store.commit()
         try:
             await self.apply_status_role(
@@ -388,6 +494,7 @@ class StatusService:
         guild_id: int,
         *,
         remove_role_ids: Optional[set[int]] = None,
+        actor: Optional[object] = None,
     ) -> tuple[int, int]:
         total = 0
         failed = 0
@@ -440,7 +547,12 @@ class StatusService:
         except RuntimeError:
             logger.exception("Failed to re-apply status roles on rejoin for user %s", member.id)
 
-    async def save_stage_count_settings(self, guild_id: int, stage_count: int) -> tuple[int, int]:
+    async def save_stage_count_settings(
+        self,
+        guild_id: int,
+        stage_count: int,
+        actor: Optional[object] = None,
+    ) -> tuple[int, int]:
         previous = self.store.get_status_config(guild_id)
         if previous is not None and stage_count < previous.stage_count:
             if self.store.count_records_above_stage(guild_id, stage_count) > 0:
@@ -463,13 +575,32 @@ class StatusService:
             self.store.clamp_records_to_stage(guild_id, stage_count, target_expires_at)
             self.store.delete_stages_above(guild_id, stage_count)
 
+        previous_count = previous.stage_count if previous is not None else None
+        self._record_history(
+            guild_id,
+            user_id=None,
+            actor=actor,
+            event_type=HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
+            from_stage_index=None,
+            to_stage_index=None,
+            detail=(
+                f"段階数を {'未設定' if previous_count is None else previous_count} から "
+                f"{stage_count} に変更"
+            ),
+        )
         self.store.commit()
         return await self.refresh_guild_status_roles(
             guild_id,
             remove_role_ids=previous_role_ids,
+            actor=actor,
         )
 
-    async def save_stage_settings(self, guild_id: int, stage: StatusStageConfig) -> tuple[int, int]:
+    async def save_stage_settings(
+        self,
+        guild_id: int,
+        stage: StatusStageConfig,
+        actor: Optional[object] = None,
+    ) -> tuple[int, int]:
         config = self.store.get_status_config(guild_id)
         if config is None:
             raise ValueError("先に段階数を設定してください。")
@@ -478,11 +609,27 @@ class StatusService:
 
         validate_stage_configuration(config, stage)
         previous_role_ids = configured_role_ids(config)
+        previous_stage = get_stage(config, stage.stage_index)
         self.store.upsert_status_stage(guild_id, stage)
+        self._record_history(
+            guild_id,
+            user_id=None,
+            actor=actor,
+            event_type=HISTORY_EVENT_CONFIG_STAGE_SAVED,
+            from_stage_index=previous_stage.stage_index if previous_stage is not None else None,
+            to_stage_index=stage.stage_index,
+            detail=(
+                f"{stage_display_name(stage)} を保存 "
+                f"(ロール {previous_stage.role_id if previous_stage is not None else '未設定'} -> {stage.role_id}, "
+                f"期間 {previous_stage.duration_seconds if previous_stage is not None else '未設定'} -> {stage.duration_seconds}, "
+                f"満了時 {previous_stage.on_expire_action if previous_stage is not None else '未設定'} -> {stage.on_expire_action})"
+            ),
+        )
         self.store.commit()
         return await self.refresh_guild_status_roles(
             guild_id,
             remove_role_ids=previous_role_ids,
+            actor=actor,
         )
 
     async def assign_status(
@@ -502,15 +649,28 @@ class StatusService:
                 f"段階{stage_index} から到達するステータス設定が未完了です。\n先に {SETUP_GUIDANCE}"
             )
 
+        previous = self.store.get_status_record(guild_id, member.id)
         expires_at = now_ts() + current_stage.duration_seconds
         self.store.upsert_status_record(guild_id, member.id, stage_index, expires_at, reason)
-        self.store.commit()
-        await self.apply_status_role(
+        self._record_history(
             guild_id,
-            member.id,
-            stage_index,
-            reason=f"Manual status set by {actor}",
+            user_id=member.id,
+            actor=actor,
+            event_type=HISTORY_EVENT_MANUAL_SET,
+            from_stage_index=previous["stage_index"] if previous is not None else None,
+            to_stage_index=stage_index,
+            reason=reason,
         )
+        self.store.commit()
+        try:
+            await self.apply_status_role(
+                guild_id,
+                member.id,
+                stage_index,
+                reason=f"Manual status set by {actor}",
+            )
+        except (discord.Forbidden, RuntimeError):
+            raise
         return self.store.get_status_record(guild_id, member.id)
 
     async def clear_status(
@@ -519,11 +679,24 @@ class StatusService:
         member: discord.Member,
         actor: object,
     ) -> None:
+        previous = self.store.get_status_record(guild_id, member.id)
         self.store.delete_status_record(guild_id, member.id)
-        self.store.commit()
-        await self.apply_status_role(
+        self._record_history(
             guild_id,
-            member.id,
-            None,
-            reason=f"Manual status clear by {actor}",
+            user_id=member.id,
+            actor=actor,
+            event_type=HISTORY_EVENT_MANUAL_CLEAR,
+            from_stage_index=previous["stage_index"] if previous is not None else None,
+            to_stage_index=None,
+            reason=previous["reason"] if previous is not None else "",
         )
+        self.store.commit()
+        try:
+            await self.apply_status_role(
+                guild_id,
+                member.id,
+                None,
+                reason=f"Manual status clear by {actor}",
+            )
+        except (discord.Forbidden, RuntimeError):
+            raise

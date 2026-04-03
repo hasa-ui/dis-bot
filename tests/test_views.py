@@ -4,10 +4,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from status_bot.models import StatusListEntry, StatusStageConfig
+from status_bot.models import StatusHistoryEntry, StatusListEntry, StatusStageConfig
 from status_bot.store import StatusStore
 from status_bot.validation import days_to_seconds
-from status_bot.views import StageSetupView, StatusListView
+from status_bot.views import StageSetupView, StatusHistoryView, StatusListView
 
 
 class FakeGuild:
@@ -118,6 +118,27 @@ class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(allowed)
         self.assertEqual(interaction.response.messages, [("Manage Roles 権限が必要です。", True)])
+
+    async def test_status_history_view_updates_button_state_by_page(self) -> None:
+        entries = [
+            StatusHistoryEntry(i, "manual_set", f"<@{i}>", None, "段階1", "理由" * 10, "詳細" * 10)
+            for i in range(3)
+        ]
+        view = StatusHistoryView(1, "<@1>", entries, max_length=240)
+
+        self.assertGreater(view.page_count, 1)
+        self.assertTrue(view.previous_page.disabled)
+        self.assertFalse(view.next_page.disabled)
+        self.assertIn(f"ページ: 1/{view.page_count}", view.render_content())
+
+        view.page_index = 1
+        view._sync_buttons()
+        self.assertFalse(view.previous_page.disabled)
+        if view.page_count == 2:
+            self.assertTrue(view.next_page.disabled)
+        else:
+            self.assertFalse(view.next_page.disabled)
+        self.assertIn(f"ページ: 2/{view.page_count}", view.render_content())
 
 
 if __name__ == "__main__":

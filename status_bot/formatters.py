@@ -3,8 +3,21 @@ from typing import Optional
 
 import discord
 
-from .config import ACTION_HOLD, ACTION_LABELS, ACTION_CLEAR, SETUP_GUIDANCE, VALID_EXPIRE_ACTIONS
-from .models import GuildStatusConfig, SetupPreviewSummary, StatusListEntry, StatusStageConfig
+from .config import (
+    ACTION_HOLD,
+    ACTION_LABELS,
+    ACTION_CLEAR,
+    HISTORY_EVENT_AUTO_CLEAR,
+    HISTORY_EVENT_AUTO_HOLD,
+    HISTORY_EVENT_AUTO_TRANSITION,
+    HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
+    HISTORY_EVENT_CONFIG_STAGE_SAVED,
+    HISTORY_EVENT_MANUAL_CLEAR,
+    HISTORY_EVENT_MANUAL_SET,
+    SETUP_GUIDANCE,
+    VALID_EXPIRE_ACTIONS,
+)
+from .models import GuildStatusConfig, SetupPreviewSummary, StatusHistoryEntry, StatusListEntry, StatusStageConfig
 from .validation import (
     config_complete,
     default_stage_name,
@@ -15,6 +28,16 @@ from .validation import (
 )
 
 STATUS_LIST_MESSAGE_LIMIT = 1900
+STATUS_HISTORY_MESSAGE_LIMIT = 1900
+HISTORY_EVENT_LABELS = {
+    HISTORY_EVENT_MANUAL_SET: "手動付与",
+    HISTORY_EVENT_MANUAL_CLEAR: "手動解除",
+    HISTORY_EVENT_AUTO_TRANSITION: "自動遷移",
+    HISTORY_EVENT_AUTO_HOLD: "自動維持",
+    HISTORY_EVENT_AUTO_CLEAR: "自動解除",
+    HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED: "段階数設定変更",
+    HISTORY_EVENT_CONFIG_STAGE_SAVED: "段階設定変更",
+}
 
 
 def format_remaining(seconds: int) -> str:
@@ -163,6 +186,29 @@ def build_status_list_entry_line(entry: StatusListEntry) -> str:
     )
 
 
+def describe_status_history_change(entry: StatusHistoryEntry) -> str:
+    if entry.from_stage_name and entry.to_stage_name:
+        return f"{entry.from_stage_name} -> {entry.to_stage_name}"
+    if entry.from_stage_name and entry.to_stage_name is None:
+        return f"{entry.from_stage_name} -> 解除"
+    if entry.from_stage_name is None and entry.to_stage_name:
+        return f"なし -> {entry.to_stage_name}"
+    return "変更情報なし"
+
+
+def build_status_history_entry_line(entry: StatusHistoryEntry) -> str:
+    line = (
+        f"- <t:{entry.created_at}:f>: "
+        f"{HISTORY_EVENT_LABELS.get(entry.event_type, entry.event_type)} / "
+        f"実行者 {entry.actor_display} / "
+        f"変更 {describe_status_history_change(entry)} / "
+        f"理由 {entry.reason or '（なし）'}"
+    )
+    if entry.detail:
+        line += f" / 詳細 {entry.detail}"
+    return line
+
+
 def _build_status_list_message_from_lines(
     entry_lines: list[str],
     *,
@@ -179,6 +225,23 @@ def _build_status_list_message_from_lines(
     return "\n".join(lines)
 
 
+def _build_status_history_message_from_lines(
+    member_display: str,
+    entry_lines: list[str],
+    *,
+    page_index: int,
+    page_count: int,
+    total_count: int,
+) -> str:
+    lines = [
+        f"{member_display} のステータス履歴",
+        f"- ページ: {page_index + 1}/{page_count}",
+        f"- 全件数: {total_count}件",
+    ]
+    lines.extend(entry_lines)
+    return "\n".join(lines)
+
+
 def build_status_list_message(
     entries: list[StatusListEntry],
     *,
@@ -188,6 +251,23 @@ def build_status_list_message(
 ) -> str:
     return _build_status_list_message_from_lines(
         [build_status_list_entry_line(entry) for entry in entries],
+        page_index=page_index,
+        page_count=page_count,
+        total_count=total_count,
+    )
+
+
+def build_status_history_message(
+    member_display: str,
+    entries: list[StatusHistoryEntry],
+    *,
+    page_index: int,
+    page_count: int,
+    total_count: int,
+) -> str:
+    return _build_status_history_message_from_lines(
+        member_display,
+        [build_status_history_entry_line(entry) for entry in entries],
         page_index=page_index,
         page_count=page_count,
         total_count=total_count,
@@ -246,6 +326,71 @@ def paginate_status_list_messages(
 
     return [
         _build_status_list_message_from_lines(
+            page_lines,
+            page_index=page_index,
+            page_count=len(pages),
+            total_count=total_count,
+        )
+        for page_index, page_lines in enumerate(pages)
+    ]
+
+
+def paginate_status_history_messages(
+    member_display: str,
+    entries: list[StatusHistoryEntry],
+    *,
+    max_length: int = STATUS_HISTORY_MESSAGE_LIMIT,
+) -> list[str]:
+    total_count = len(entries)
+    if total_count == 0:
+        return [
+            _build_status_history_message_from_lines(
+                member_display,
+                [],
+                page_index=0,
+                page_count=1,
+                total_count=0,
+            )
+        ]
+
+    max_page_count = total_count
+    max_header_length = len(
+        _build_status_history_message_from_lines(
+            member_display,
+            [],
+            page_index=max_page_count - 1,
+            page_count=max_page_count,
+            total_count=total_count,
+        )
+    )
+    if max_header_length >= max_length:
+        raise ValueError("ステータス履歴ヘッダーが長すぎます。")
+
+    pages: list[list[str]] = []
+    current_page_lines: list[str] = []
+    current_length = max_header_length
+
+    for entry in entries:
+        entry_line = build_status_history_entry_line(entry)
+        added_length = len(entry_line) + 1
+
+        if current_page_lines and current_length + added_length > max_length:
+            pages.append(current_page_lines)
+            current_page_lines = []
+            current_length = max_header_length
+
+        if current_length + added_length > max_length:
+            raise ValueError("ステータス履歴の 1 行が長すぎます。")
+
+        current_page_lines.append(entry_line)
+        current_length += added_length
+
+    if current_page_lines:
+        pages.append(current_page_lines)
+
+    return [
+        _build_status_history_message_from_lines(
+            member_display,
             page_lines,
             page_index=page_index,
             page_count=len(pages),

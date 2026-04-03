@@ -76,6 +76,28 @@ class StatusStore:
             )
             """
         )
+        self.db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS status_history_records (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id         INTEGER NOT NULL,
+                user_id          INTEGER,
+                actor_user_id    INTEGER,
+                event_type       TEXT NOT NULL,
+                from_stage_index INTEGER,
+                to_stage_index   INTEGER,
+                reason           TEXT NOT NULL DEFAULT '',
+                detail           TEXT NOT NULL DEFAULT '',
+                created_at       INTEGER NOT NULL
+            )
+            """
+        )
+        self.db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_status_history_records_member
+            ON status_history_records (guild_id, user_id, created_at DESC, id DESC)
+            """
+        )
         self.commit()
         self._migrate_legacy_data()
 
@@ -372,4 +394,51 @@ class StatusStore:
             ORDER BY updated_at ASC
             """,
             (guild_id,),
+        ).fetchall()
+
+    def append_status_history(
+        self,
+        guild_id: int,
+        *,
+        user_id: Optional[int],
+        actor_user_id: Optional[int],
+        event_type: str,
+        from_stage_index: Optional[int],
+        to_stage_index: Optional[int],
+        reason: str,
+        detail: str,
+        created_at: Optional[int] = None,
+    ) -> None:
+        self.db.execute(
+            """
+            INSERT INTO status_history_records (
+                guild_id, user_id, actor_user_id, event_type,
+                from_stage_index, to_stage_index, reason, detail, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                guild_id,
+                user_id,
+                actor_user_id,
+                event_type,
+                from_stage_index,
+                to_stage_index,
+                reason,
+                detail,
+                now_ts() if created_at is None else created_at,
+            ),
+        )
+
+    def get_status_history_for_member(self, guild_id: int, user_id: int):
+        return self.db.execute(
+            """
+            SELECT
+                id, guild_id, user_id, actor_user_id, event_type,
+                from_stage_index, to_stage_index, reason, detail, created_at
+            FROM status_history_records
+            WHERE guild_id = ? AND user_id = ?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (guild_id, user_id),
         ).fetchall()
