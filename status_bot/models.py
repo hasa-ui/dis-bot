@@ -23,3 +23,14 @@ class SetupPreviewSummary:
     reapply_count: int
     clamp_count: int
     missing_role_count: int
+
+
+@dataclass(frozen=True)
+class StatusListEntry:
+    user_id: int
+    member_display: str
+    stage_index: int
+    stage_name: str
+    next_change_text: str
+    reason: str
+    expires_at: Optional[int]

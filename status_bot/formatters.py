@@ -4,7 +4,7 @@ from typing import Optional
 import discord
 
 from .config import ACTION_HOLD, ACTION_LABELS, ACTION_CLEAR, SETUP_GUIDANCE, VALID_EXPIRE_ACTIONS
-from .models import GuildStatusConfig, SetupPreviewSummary, StatusStageConfig
+from .models import GuildStatusConfig, SetupPreviewSummary, StatusListEntry, StatusStageConfig
 from .validation import (
     config_complete,
     default_stage_name,
@@ -144,6 +144,33 @@ def build_status_config_message(guild: discord.Guild, config: Optional[GuildStat
         lines.append(f"- 未設定項目: {', '.join(missing)}")
         lines.append(f"設定変更は {SETUP_GUIDANCE}")
 
+    return "\n".join(lines)
+
+
+def shorten_reason(reason: str, limit: int = 80) -> str:
+    if len(reason) <= limit:
+        return reason
+    return reason[: limit - 3] + "..."
+
+
+def build_status_list_message(
+    entries: list[StatusListEntry],
+    *,
+    page_index: int,
+    page_count: int,
+    total_count: int,
+) -> str:
+    lines = [
+        "現在のステータス一覧",
+        f"- ページ: {page_index + 1}/{page_count}",
+        f"- 全件数: {total_count}件",
+    ]
+    for entry in entries:
+        lines.append(
+            f"- {entry.member_display}: {entry.stage_name} / "
+            f"次回変更 {entry.next_change_text} / "
+            f"理由 {shorten_reason(entry.reason) if entry.reason else '（なし）'}"
+        )
     return "\n".join(lines)
 
 

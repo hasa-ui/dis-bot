@@ -1,11 +1,12 @@
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 
-from status_bot.models import StatusStageConfig
+from status_bot.models import StatusListEntry, StatusStageConfig
 from status_bot.store import StatusStore
 from status_bot.validation import days_to_seconds
-from status_bot.views import StageSetupView
+from status_bot.views import StageSetupView, StatusListView
 
 
 class FakeGuild:
@@ -14,6 +15,9 @@ class FakeGuild:
 
     def get_role(self, role_id: int):
         return None
+
+    def get_member(self, user_id: int):
+        return SimpleNamespace(mention=f"<@{user_id}>")
 
 
 class FakeBot:
@@ -57,6 +61,40 @@ class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current.label, "現行")
         self.assertEqual(current.role_id, 22)
         self.assertIn("下書きは復元せず", view.notice or "")
+
+    async def test_status_list_view_updates_button_state_by_page(self) -> None:
+        entries = [
+            StatusListEntry(i, f"<@{i}>", 1, "段階1", "1日後に 解除", "", i)
+            for i in range(3)
+        ]
+        view = StatusListView(1, entries, page_size=2)
+
+        self.assertTrue(view.previous_page.disabled)
+        self.assertFalse(view.next_page.disabled)
+        self.assertIn("ページ: 1/2", view.render_content())
+
+        view.page_index = 1
+        view._sync_buttons()
+        self.assertFalse(view.previous_page.disabled)
+        self.assertTrue(view.next_page.disabled)
+        self.assertIn("ページ: 2/2", view.render_content())
+
+    async def test_status_list_view_rejects_other_user(self) -> None:
+        entries = [StatusListEntry(1, "<@1>", 1, "段階1", "1日後に 解除", "", 1)]
+        view = StatusListView(1, entries)
+
+        class FakeResponse:
+            def __init__(self) -> None:
+                self.called = False
+
+            async def send_message(self, content: str, ephemeral: bool = False) -> None:
+                self.called = True
+
+        interaction = SimpleNamespace(user=SimpleNamespace(id=2), response=FakeResponse())
+        allowed = await view.interaction_check(interaction)
+
+        self.assertFalse(allowed)
+        self.assertTrue(interaction.response.called)
 
 
 if __name__ == "__main__":

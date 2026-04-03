@@ -9,9 +9,10 @@ from .formatters import (
     build_stage_editor_message,
     build_stage_save_preview_message,
     build_stage_save_message,
+    build_status_list_message,
     build_status_count_save_message,
 )
-from .models import GuildStatusConfig, StatusStageConfig
+from .models import GuildStatusConfig, StatusListEntry, StatusStageConfig
 from .permissions import has_manage_guild
 from .validation import (
     days_to_seconds,
@@ -28,10 +29,9 @@ if TYPE_CHECKING:
     from .app import StatusBot
 
 
-class OwnerOnlyView(discord.ui.View):
-    def __init__(self, bot: "StatusBot", owner_id: int) -> None:
+class UserOnlyView(discord.ui.View):
+    def __init__(self, owner_id: int) -> None:
         super().__init__(timeout=600)
-        self.bot = bot
         self.owner_id = owner_id
         self.message: Optional[discord.InteractionMessage] = None
 
@@ -46,6 +46,18 @@ class OwnerOnlyView(discord.ui.View):
             )
             return False
 
+        return True
+
+
+class OwnerOnlyView(UserOnlyView):
+    def __init__(self, bot: "StatusBot", owner_id: int) -> None:
+        super().__init__(owner_id)
+        self.bot = bot
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not await super().interaction_check(interaction):
+            return False
+
         if not has_manage_guild(interaction):
             await interaction.response.send_message(
                 "Manage Server 権限か管理者権限が必要です。",
@@ -54,6 +66,63 @@ class OwnerOnlyView(discord.ui.View):
             return False
 
         return True
+
+
+class StatusListView(UserOnlyView):
+    def __init__(
+        self,
+        owner_id: int,
+        entries: list[StatusListEntry],
+        *,
+        page_size: int = 10,
+        page_index: int = 0,
+    ) -> None:
+        super().__init__(owner_id)
+        self.entries = entries
+        self.page_size = page_size
+        self.page_index = page_index
+        self._sync_buttons()
+
+    @property
+    def page_count(self) -> int:
+        return max(1, (len(self.entries) + self.page_size - 1) // self.page_size)
+
+    def current_page_entries(self) -> list[StatusListEntry]:
+        start = self.page_index * self.page_size
+        end = start + self.page_size
+        return self.entries[start:end]
+
+    def _sync_buttons(self) -> None:
+        self.previous_page.disabled = self.page_index <= 0
+        self.next_page.disabled = self.page_index >= self.page_count - 1
+
+    def render_content(self) -> str:
+        return build_status_list_message(
+            self.current_page_entries(),
+            page_index=self.page_index,
+            page_count=self.page_count,
+            total_count=len(self.entries),
+        )
+
+    @discord.ui.button(label="前へ", style=discord.ButtonStyle.secondary)
+    async def previous_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        self.page_index = max(0, self.page_index - 1)
+        self._sync_buttons()
+        await interaction.response.edit_message(content=self.render_content(), view=self)
+
+    @discord.ui.button(label="次へ", style=discord.ButtonStyle.secondary)
+    async def next_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        self.page_index = min(self.page_count - 1, self.page_index + 1)
+        self._sync_buttons()
+        await interaction.response.edit_message(content=self.render_content(), view=self)
 
 
 class StageCountModal(discord.ui.Modal, title="段階数設定"):

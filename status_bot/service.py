@@ -3,8 +3,8 @@ from typing import Optional
 import discord
 
 from .config import ACTION_CLEAR, ACTION_HOLD, SETUP_GUIDANCE, logger
-from .formatters import stage_display_name
-from .models import GuildStatusConfig, SetupPreviewSummary, StatusStageConfig
+from .formatters import describe_record_next_change, stage_display_name
+from .models import GuildStatusConfig, SetupPreviewSummary, StatusListEntry, StatusStageConfig
 from .store import StatusStore
 from .validation import (
     configured_role_ids,
@@ -214,6 +214,45 @@ class StatusService:
             return await guild.fetch_member(user_id)
         except discord.NotFound:
             return None
+
+    async def list_guild_status_records(self, guild: discord.Guild) -> list[StatusListEntry]:
+        config = self.store.get_status_config(guild.id)
+        if config is None:
+            raise RuntimeError(f"このサーバーのステータス設定が未完了です。\n先に {SETUP_GUIDANCE}")
+
+        entries: list[StatusListEntry] = []
+        for row in self.store.get_active_records_by_guild(guild.id):
+            await self.reconcile_record(row)
+            current = self.store.get_status_record(guild.id, row["user_id"])
+            if current is None:
+                continue
+
+            current_stage = get_stage(config, current["stage_index"])
+            if current_stage is None:
+                raise RuntimeError("段階設定の取得に失敗しました。")
+
+            member = guild.get_member(current["user_id"])
+            entries.append(
+                StatusListEntry(
+                    user_id=current["user_id"],
+                    member_display=member.mention if member is not None else f"<@{current['user_id']}>",
+                    stage_index=current["stage_index"],
+                    stage_name=stage_display_name(current_stage),
+                    next_change_text=describe_record_next_change(config, current),
+                    reason=current["reason"] or "",
+                    expires_at=current["expires_at"],
+                )
+            )
+
+        entries.sort(
+            key=lambda entry: (
+                entry.expires_at is None,
+                entry.expires_at if entry.expires_at is not None else 0,
+                -entry.stage_index,
+                entry.user_id,
+            )
+        )
+        return entries
 
     async def apply_status_role(
         self,
