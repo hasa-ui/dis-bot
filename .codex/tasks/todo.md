@@ -1,5 +1,8 @@
 # TODO
 
+- [x] `ロードマップ.md` をもとに `タスクリスト.md` の対象範囲と優先順を整理する
+- [x] repo ルートに `タスクリスト.md` を追加し、短期ロードマップを実装単位のチェックリストへ落とす
+- [x] `タスクリスト.md` に既存公開 I/F、短期追加候補、後続候補、検証観点をまとめる
 - [x] 現行実装を根拠にロードマップ候補と優先軸を整理する
 - [x] 運用便利化と機能拡張の両輪で `ロードマップ.md` を作成する
 - [x] ロードマップの現状説明と将来案が混在していないことを確認する
@@ -71,6 +74,7 @@
 ## Notes
 
 - `.codex/tasks` ディレクトリが存在しなかったため新規作成した
+- 今回の `タスクリスト.md` 作成では未解決事項は残っていない
 
 ## Changes
 
@@ -132,9 +136,14 @@
 - `bot.py` に `/config_roles` 後の既存違反者向けロール再適用処理 `refresh_guild_violation_roles()` を追加
 - `/config_roles` の応答に既存違反者への再適用件数と失敗件数を追加
 - `/config_durations` の応答に「現在の期限は変わらず、次回降格以降に新期間が反映される」旨を追加
+- `タスクリスト.md` を新規追加し、`ロードマップ.md` の短期ロードマップを今回の実行対象として実装単位のチェックリストへ落とし込んだ
+- `タスクリスト.md` では優先軸に合わせて `/setup` 保存前プレビュー、`/status_list`、履歴・監査ログ、通知設定の順に並べ、既存公開 I/F と追加候補を分けて明記した
+- `タスクリスト.md` の末尾に中期・長期ロードマップを「後続候補」として残し、今回対象外であることを明示した
 
 ## Verification
 
+- 実施: `git status --short` -> 編集前 worktree が clean であることを確認
+- 実施: `sed -n '1,220p' ロードマップ.md` / `sed -n '1,220p' AGENTS.md` -> `タスクリスト.md` に反映すべき優先軸、既存 I/F、検証方針、制約を再確認
 - 実施: `find . -maxdepth 1 -type f | sort` / `rg -n "setup|status_config|status_set|status_clear|status_view|hold|stage_count" status_bot AGENTS.md tests` -> 現行機能と公開 I/F の根拠を確認
 - 実施: `sed -n '1,260p' status_bot/commands.py` / `sed -n '1,360p' status_bot/service.py` / `sed -n '1,420p' status_bot/store.py` / `sed -n '1,260p' status_bot/views.py` / `sed -n '1,220p' runbot.sh` / `sed -n '1,280p' supervisor.sh` -> ロードマップの現在地説明と制約の根拠を確認
 - 実施: `sed -n '1,320p' ロードマップ.md` -> 章構成と各候補の記述を確認
@@ -179,5 +188,6 @@
 - 実施: `/config_roles` の処理順を確認し、`defer -> 保存 -> 再適用 -> followup` になっていることをコード上で確認
 - 実施: 旧設定ロール ID を `refresh_guild_violation_roles(..., remove_role_ids=previous_role_ids)` 経由で再適用時に除去することをコード上で確認
 - 実施: `/setup` から既存保存 helper を呼ぶ構成になっていること、`config_show` / 未設定エラーが `/setup` 優先文言になっていることをコード上で確認
+- 実施: `sed -n '1,240p' タスクリスト.md` / `rg -n "/setup|/status_list|/status_history|/status_notify_config|後続候補|python -m py_compile|python -m unittest" タスクリスト.md` -> 新規文書に対象範囲、優先順、追加候補、検証観点が入っていることを確認
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため
