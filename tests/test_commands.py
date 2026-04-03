@@ -5,7 +5,16 @@ from unittest.mock import AsyncMock, Mock, patch
 import discord
 
 from status_bot.config import ACTION_HOLD
-from status_bot.models import BulkOperationResult, GuildStatusNotificationConfig, StatusHistoryEntry, StatusStageConfig
+from status_bot.models import (
+    BulkOperationResult,
+    GuildStatusConfig,
+    GuildStatusNotificationConfig,
+    StatusConfigExportPayload,
+    StatusConfigExportStage,
+    StatusConfigImportPreview,
+    StatusHistoryEntry,
+    StatusStageConfig,
+)
 
 from status_bot.commands import register_commands
 
@@ -28,19 +37,27 @@ class FakeTree:
 
 
 class FakeBot:
-    def __init__(self) -> None:
+    def __init__(self, guild=None) -> None:
         self.tree = FakeTree()
         self.service = SimpleNamespace()
         self.store = SimpleNamespace()
+        self._guild = guild
+
+    def get_guild(self, guild_id: int):
+        if self._guild is not None and self._guild.id == guild_id:
+            return self._guild
+        return None
 
 
 class FakeResponse:
     def __init__(self) -> None:
         self.messages = []
+        self.files = []
         self.deferred = False
 
-    async def send_message(self, content: str, ephemeral: bool = False, view=None) -> None:
+    async def send_message(self, content: str, ephemeral: bool = False, view=None, file=None) -> None:
         self.messages.append((content, ephemeral, view))
+        self.files.append(file)
 
     async def defer(self, ephemeral: bool = False) -> None:
         self.deferred = True
@@ -87,9 +104,13 @@ class FakeBomAttachment:
 
 
 class FakeGuild:
-    def __init__(self, guild_id: int, *, me=None) -> None:
+    def __init__(self, guild_id: int, *, me=None, role_ids=()) -> None:
         self.id = guild_id
         self.me = me if me is not None else object()
+        self._roles = {role_id: SimpleNamespace(id=role_id, mention=f"<@&{role_id}>") for role_id in role_ids}
+
+    def get_role(self, role_id: int):
+        return self._roles.get(role_id)
 
 
 class CommandTests(unittest.IsolatedAsyncioTestCase):
@@ -243,6 +264,98 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(saved.notify_manual_clear)
         bot.store.commit.assert_called_once()
         self.assertIn("通知設定を保存しました。", interaction.response.messages[0][0])
+
+    async def test_status_export_returns_json_attachment(self) -> None:
+        bot = FakeBot()
+        bot.service.export_status_config = Mock(
+            return_value=StatusConfigExportPayload(
+                schema_version=1,
+                source_guild_id=1,
+                exported_at=123,
+                stage_count=1,
+                stages=[
+                    StatusConfigExportStage(
+                        stage_index=1,
+                        label="警告",
+                        role_id=11,
+                        duration_seconds=86400,
+                        on_expire_action=ACTION_HOLD,
+                    )
+                ],
+            )
+        )
+        register_commands(bot)
+        command = bot.tree.commands["status_export"]
+
+        interaction = FakeInteraction(
+            guild=FakeGuild(1),
+            user=SimpleNamespace(id=10),
+        )
+
+        with patch("status_bot.commands.has_manage_guild", return_value=True):
+            await command(interaction)
+
+        self.assertEqual(len(interaction.response.messages), 1)
+        self.assertIn("ステータス設定エクスポート", interaction.response.messages[0][0])
+        self.assertEqual(len(interaction.response.files), 1)
+        file = interaction.response.files[0]
+        self.assertIsNotNone(file)
+        file.fp.seek(0)
+        content = file.fp.read().decode("utf-8")
+        self.assertIn('"schema_version": 1', content)
+        self.assertIn('"stage_count": 1', content)
+        self.assertIn('"label": "警告"', content)
+
+    async def test_status_import_renders_preview(self) -> None:
+        guild = FakeGuild(1, role_ids=(11,))
+        bot = FakeBot(guild)
+        payload = StatusConfigExportPayload(
+            schema_version=1,
+            source_guild_id=1,
+            exported_at=123,
+            stage_count=1,
+            stages=[
+                StatusConfigExportStage(
+                    stage_index=1,
+                    label="警告",
+                    role_id=11,
+                    duration_seconds=86400,
+                    on_expire_action=ACTION_HOLD,
+                )
+            ],
+        )
+        preview = StatusConfigImportPreview(
+            source_guild_id=1,
+            exported_at=123,
+            current_stage_count=1,
+            imported_config=GuildStatusConfig(
+                guild_id=1,
+                stage_count=1,
+                stages=[StatusStageConfig(1, "警告", 11, 86400, ACTION_HOLD)],
+            ),
+            reapply_count=0,
+            clamp_count=0,
+            missing_role_count=0,
+            diff_lines=["- 段階数: 1段階 -> 1段階"],
+            warning_lines=[],
+        )
+        bot.service.parse_status_config_export_payload = Mock(return_value=payload)
+        bot.service.preview_status_config_import = Mock(return_value=preview)
+        register_commands(bot)
+        command = bot.tree.commands["status_import"]
+
+        interaction = FakeInteraction(
+            guild=guild,
+            user=SimpleNamespace(id=10),
+        )
+
+        with patch("status_bot.commands.has_manage_guild", return_value=True):
+            await command(interaction, FakeAttachment("{}"))
+
+        self.assertTrue(interaction.response.deferred)
+        self.assertEqual(len(interaction.edits), 1)
+        self.assertIn("ステータス設定インポートプレビュー", interaction.edits[0][0])
+        self.assertIsNotNone(interaction.edits[0][1])
 
     async def test_status_bulk_set_parses_attachment_and_skips_invalid_targets(self) -> None:
         bot = FakeBot()

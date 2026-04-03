@@ -8,6 +8,7 @@ from .config import (
     HISTORY_EVENT_AUTO_TRANSITION,
     HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
     HISTORY_EVENT_CONFIG_STAGE_SAVED,
+    HISTORY_EVENT_CONFIG_IMPORTED,
     HISTORY_EVENT_MANUAL_CLEAR,
     HISTORY_EVENT_MANUAL_SET,
     logger,
@@ -37,7 +38,11 @@ def notification_enabled(
         return config.notify_auto_transition
     if event_type == HISTORY_EVENT_AUTO_HOLD:
         return config.notify_auto_hold
-    if event_type in {HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED, HISTORY_EVENT_CONFIG_STAGE_SAVED}:
+    if event_type in {
+        HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
+        HISTORY_EVENT_CONFIG_STAGE_SAVED,
+        HISTORY_EVENT_CONFIG_IMPORTED,
+    }:
         return config.notify_config_change
     return False
 
@@ -140,7 +145,11 @@ async def send_status_notification(
             from_stage_name,
             reason=reason,
         )
-    elif event_type in {HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED, HISTORY_EVENT_CONFIG_STAGE_SAVED}:
+    elif event_type in {
+        HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
+        HISTORY_EVENT_CONFIG_STAGE_SAVED,
+        HISTORY_EVENT_CONFIG_IMPORTED,
+    }:
         content = build_config_change_notification(
             detail,
             actor_display=actor_display,

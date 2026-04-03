@@ -7,7 +7,13 @@ from unittest.mock import AsyncMock, patch
 import discord
 
 from status_bot.config import ACTION_CLEAR, ACTION_HOLD, ACTION_NEXT
-from status_bot.models import GuildStatusNotificationConfig, StatusListEntry, StatusStageConfig
+from status_bot.models import (
+    GuildStatusNotificationConfig,
+    StatusConfigExportPayload,
+    StatusConfigExportStage,
+    StatusListEntry,
+    StatusStageConfig,
+)
 from status_bot.service import StatusService
 from status_bot.store import StatusStore
 from status_bot.validation import days_to_seconds, get_stage, now_ts
@@ -635,6 +641,67 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(channel.messages), 1)
         self.assertIn("設定変更", channel.messages[0])
         self.assertIn("0件中 0件失敗", channel.messages[0])
+        self.assertIn("<@77>", channel.messages[0])
+
+    async def test_import_status_config_replaces_settings_and_clamps_records(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "警告", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_record(1, 200, 2, now_ts() + 60, "keep")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 33), channel_ids=(900,), member_ids=(200, 77))
+        channel = self._configure_notifications(guild, notify_config_change=True)
+        payload = StatusConfigExportPayload(
+            schema_version=1,
+            source_guild_id=999,
+            exported_at=123,
+            stage_count=1,
+            stages=[
+                StatusConfigExportStage(
+                    stage_index=1,
+                    label="更新",
+                    role_id=33,
+                    duration_seconds=days_to_seconds(3),
+                    on_expire_action=ACTION_CLEAR,
+                )
+            ],
+        )
+
+        with patch(
+            "status_bot.service_actions.refresh_guild_status_roles",
+            new=AsyncMock(return_value=(1, 0)),
+        ):
+            refreshed, failed = await self.service.import_status_config(1, payload, SimpleNamespace(id=77))
+
+        self.assertEqual((refreshed, failed), (1, 0))
+        config = self.store.get_status_config(1)
+        self.assertIsNotNone(config)
+        assert config is not None
+        self.assertEqual(config.stage_count, 1)
+        self.assertEqual(config.stages[0].label, "更新")
+        self.assertEqual(config.stages[0].role_id, 33)
+        row = self.store.get_status_record(1, 200)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["stage_index"], 1)
+        history = self.store.get_status_history_for_member(1, 200)
+        self.assertEqual(history, [])
+        event = self.store.db.execute(
+            """
+            SELECT event_type, actor_user_id, detail
+            FROM status_history_records
+            WHERE guild_id = ? AND event_type = 'config_imported'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (1,),
+        ).fetchone()
+        self.assertIsNotNone(event)
+        self.assertEqual(event["actor_user_id"], 77)
+        self.assertIn("999", event["detail"])
+        self.assertEqual(len(channel.messages), 1)
+        self.assertIn("設定変更", channel.messages[0])
         self.assertIn("<@77>", channel.messages[0])
 
     async def test_preview_stage_count_settings_reports_reapply_and_clamp_counts(self) -> None:

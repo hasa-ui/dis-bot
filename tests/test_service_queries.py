@@ -3,9 +3,13 @@ import tempfile
 import unittest
 
 from status_bot.config import ACTION_CLEAR, ACTION_HOLD
-from status_bot.models import StatusStageConfig
+from status_bot.models import StatusConfigExportPayload, StatusConfigExportStage, StatusStageConfig
 from status_bot.service_common import ServiceContext
-from status_bot.service_queries import predict_reconciled_record
+from status_bot.service_queries import (
+    parse_status_config_export_payload,
+    predict_reconciled_record,
+    serialize_status_config_export_payload,
+)
 from status_bot.store import StatusStore
 from status_bot.validation import days_to_seconds, now_ts
 
@@ -57,6 +61,31 @@ class ServiceQueriesTests(unittest.TestCase):
         self.assertIsNotNone(projected)
         self.assertEqual(projected["stage_index"], 1)
         self.assertIsNone(projected["expires_at"])
+
+    def test_parse_status_config_export_payload_accepts_bom(self) -> None:
+        raw = serialize_status_config_export_payload(
+            StatusConfigExportPayload(
+                schema_version=1,
+                source_guild_id=1,
+                exported_at=123,
+                stage_count=1,
+                stages=[
+                    StatusConfigExportStage(
+                        stage_index=1,
+                        label="警告",
+                        role_id=11,
+                        duration_seconds=86400,
+                        on_expire_action=ACTION_HOLD,
+                    )
+                ],
+            )
+        )
+
+        parsed = parse_status_config_export_payload("\ufeff" + raw)
+
+        self.assertEqual(parsed.schema_version, 1)
+        self.assertEqual(parsed.stage_count, 1)
+        self.assertEqual(parsed.stages[0].label, "警告")
 
 
 if __name__ == "__main__":

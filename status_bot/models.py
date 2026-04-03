@@ -30,6 +30,37 @@ class GuildStatusNotificationConfig:
 
 
 @dataclass(frozen=True)
+class StatusConfigExportStage:
+    stage_index: int
+    label: str
+    role_id: Optional[int]
+    duration_seconds: int
+    on_expire_action: str
+
+
+@dataclass(frozen=True)
+class StatusConfigExportPayload:
+    schema_version: int
+    source_guild_id: int
+    exported_at: int
+    stage_count: int
+    stages: list[StatusConfigExportStage]
+
+
+@dataclass(frozen=True)
+class StatusConfigImportPreview:
+    source_guild_id: Optional[int]
+    exported_at: int
+    current_stage_count: Optional[int]
+    imported_config: GuildStatusConfig
+    reapply_count: int
+    clamp_count: int
+    missing_role_count: int
+    diff_lines: list[str]
+    warning_lines: list[str]
+
+
+@dataclass(frozen=True)
 class SetupPreviewSummary:
     reapply_count: int
     clamp_count: int

@@ -1,3 +1,4 @@
+import io
 import re
 from typing import TYPE_CHECKING, Optional
 
@@ -7,6 +8,7 @@ from discord import app_commands
 from .config import MAX_STAGE_COUNT, SETUP_GUIDANCE, logger
 from .formatters import (
     build_bulk_operation_message,
+    build_status_config_export_message,
     build_status_notify_config_message,
     build_setup_home_message,
     build_status_config_message,
@@ -15,8 +17,9 @@ from .formatters import (
 )
 from .models import BulkOperationResult, GuildStatusNotificationConfig
 from .permissions import can_manage_target, has_manage_guild, has_manage_roles
+from .service_queries import serialize_status_config_export_payload
 from .validation import default_stage_name, get_stage, stage_path_is_ready
-from .views import SetupHomeView, StatusHistoryView, StatusListView
+from .views import SetupHomeView, StatusConfigImportPreviewView, StatusHistoryView, StatusListView
 
 if TYPE_CHECKING:
     from .app import StatusBot
@@ -248,6 +251,74 @@ def register_commands(bot: "StatusBot") -> None:
             ),
             ephemeral=True,
         )
+
+    @bot.tree.command(name="status_export", description="このサーバーのステータス設定を JSON で出力します")
+    async def status_export(interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+        if not has_manage_guild(interaction):
+            await interaction.response.send_message(
+                "Manage Server 権限か管理者権限が必要です。",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            payload = bot.service.export_status_config(interaction.guild)
+        except RuntimeError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
+            return
+
+        file = discord.File(
+            fp=io.BytesIO(serialize_status_config_export_payload(payload).encode("utf-8")),
+            filename=f"status-config-{interaction.guild.id}.json",
+        )
+        await interaction.response.send_message(
+            build_status_config_export_message(payload),
+            file=file,
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="status_import", description="JSON からステータス設定を取り込みます")
+    @app_commands.describe(config="インポート元の JSON ファイル")
+    async def status_import(
+        interaction: discord.Interaction,
+        config: discord.Attachment,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+        if not has_manage_guild(interaction):
+            await interaction.response.send_message(
+                "Manage Server 権限か管理者権限が必要です。",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            raw = await config.read()
+            try:
+                text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError as e:
+                raise ValueError("添付ファイルは UTF-8 テキストである必要があります。") from e
+
+            payload = bot.service.parse_status_config_export_payload(text)
+            preview = bot.service.preview_status_config_import(interaction.guild, payload)
+        except (ValueError, discord.DiscordException) as e:
+            await interaction.edit_original_response(content=str(e), view=None)
+            return
+
+        new_view = StatusConfigImportPreviewView(
+            bot,
+            interaction.user.id,
+            interaction.guild,
+            payload,
+            preview,
+        )
+        await interaction.edit_original_response(content=new_view.render_content(), view=new_view)
+        new_view.message = await interaction.original_response()
 
     @bot.tree.command(name="status_set", description="ステータスロールを付与または上書きします")
     @app_commands.describe(member="対象メンバー", stage="対象段階 (1〜10)", reason="理由")

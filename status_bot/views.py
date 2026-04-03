@@ -11,11 +11,20 @@ from .formatters import (
     build_stage_editor_message,
     build_stage_save_preview_message,
     build_stage_save_message,
+    build_status_config_import_preview_message,
+    build_status_config_import_result_message,
     build_status_count_save_message,
     paginate_status_history_messages,
     paginate_status_list_messages,
 )
-from .models import GuildStatusConfig, StatusHistoryEntry, StatusListEntry, StatusStageConfig
+from .models import (
+    GuildStatusConfig,
+    StatusConfigExportPayload,
+    StatusConfigImportPreview,
+    StatusHistoryEntry,
+    StatusListEntry,
+    StatusStageConfig,
+)
 from .permissions import has_manage_guild
 from .validation import (
     days_to_seconds,
@@ -728,4 +737,98 @@ class StageSavePreviewView(OwnerOnlyView):
             notice=build_stage_save_message(current_stage or self.draft_stage, refreshed, failed),
         )
         await interaction.edit_original_response(content=new_view.render_content(), view=new_view)
+        new_view.message = self.message
+
+
+class StatusConfigImportPreviewView(OwnerOnlyView):
+    def __init__(
+        self,
+        bot: "StatusBot",
+        owner_id: int,
+        guild: discord.Guild,
+        payload: StatusConfigExportPayload,
+        preview: StatusConfigImportPreview,
+    ) -> None:
+        super().__init__(bot, owner_id)
+        self.guild_id = guild.id
+        self.payload = payload
+        self.preview = preview
+
+    def render_content(self) -> str:
+        guild = self.bot.get_guild(self.guild_id)
+        if guild is None:
+            return "サーバー情報が見つかりません。"
+        return build_status_config_import_preview_message(guild, self.preview)
+
+    @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.secondary)
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        new_view = SetupHomeView(self.bot, self.owner_id)
+        await interaction.response.edit_message(
+            content=build_setup_home_message(guild, self.bot.store.get_status_config(guild.id)),
+            view=new_view,
+        )
+        await new_view.bind_message(interaction)
+
+    @discord.ui.button(label="この内容でインポート", style=discord.ButtonStyle.success)
+    async def confirm_import(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        try:
+            refreshed, failed = await self.bot.service.import_status_config(
+                guild.id,
+                self.payload,
+                interaction.user,
+            )
+        except ValueError as e:
+            new_view = SetupHomeView(self.bot, self.owner_id)
+            await interaction.edit_original_response(
+                content=build_setup_home_message(
+                    guild,
+                    self.bot.store.get_status_config(guild.id),
+                    notice=str(e),
+                ),
+                view=new_view,
+            )
+            new_view.message = self.message
+            return
+        except RuntimeError as e:
+            new_view = SetupHomeView(self.bot, self.owner_id)
+            await interaction.edit_original_response(
+                content=build_setup_home_message(
+                    guild,
+                    self.bot.store.get_status_config(guild.id),
+                    notice=str(e),
+                ),
+                view=new_view,
+            )
+            new_view.message = self.message
+            return
+
+        new_view = SetupHomeView(self.bot, self.owner_id)
+        await interaction.edit_original_response(
+            content=build_status_config_import_result_message(
+                self.preview.current_stage_count,
+                self.preview.imported_config,
+                refreshed,
+                failed,
+            ),
+            view=new_view,
+        )
         new_view.message = self.message

@@ -370,6 +370,42 @@ class StatusStore:
             ),
         )
 
+    def replace_status_config(self, guild_id: int, stage_count: int, stages: list[StatusStageConfig]) -> None:
+        updated_at = now_ts()
+        self.db.execute(
+            """
+            INSERT INTO guild_status_settings (guild_id, stage_count, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET
+                stage_count = excluded.stage_count,
+                updated_at = excluded.updated_at
+            """,
+            (guild_id, stage_count, updated_at),
+        )
+        self.db.execute(
+            "DELETE FROM guild_status_stages WHERE guild_id = ?",
+            (guild_id,),
+        )
+        for stage in stages:
+            self.db.execute(
+                """
+                INSERT INTO guild_status_stages (
+                    guild_id, stage_index, label, role_id,
+                    duration_seconds, on_expire_action, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    guild_id,
+                    stage.stage_index,
+                    stage.label,
+                    stage.role_id,
+                    stage.duration_seconds,
+                    stage.on_expire_action,
+                    updated_at,
+                ),
+            )
+
     def ensure_stage_rows(self, guild_id: int, stage_count: int) -> None:
         current = self.get_status_config(guild_id)
         existing = {stage.stage_index for stage in current.stages} if current is not None else set()

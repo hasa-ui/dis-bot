@@ -12,6 +12,7 @@ from .config import (
     HISTORY_EVENT_AUTO_TRANSITION,
     HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
     HISTORY_EVENT_CONFIG_STAGE_SAVED,
+    HISTORY_EVENT_CONFIG_IMPORTED,
     HISTORY_EVENT_MANUAL_CLEAR,
     HISTORY_EVENT_MANUAL_SET,
     SETUP_GUIDANCE,
@@ -21,6 +22,8 @@ from .models import (
     GuildStatusConfig,
     GuildStatusNotificationConfig,
     BulkOperationResult,
+    StatusConfigExportPayload,
+    StatusConfigImportPreview,
     SetupPreviewSummary,
     StatusHistoryEntry,
     StatusListEntry,
@@ -47,6 +50,7 @@ HISTORY_EVENT_LABELS = {
     HISTORY_EVENT_AUTO_CLEAR: "自動解除",
     HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED: "段階数設定変更",
     HISTORY_EVENT_CONFIG_STAGE_SAVED: "段階設定変更",
+    HISTORY_EVENT_CONFIG_IMPORTED: "設定インポート",
 }
 
 
@@ -239,6 +243,79 @@ def build_status_notify_config_message(
     lines.append(f"- 自動遷移・自動解除: {format_notification_toggle(config.notify_auto_transition)}")
     lines.append(f"- 自動維持: {format_notification_toggle(config.notify_auto_hold)}")
     lines.append(f"- 設定変更: {format_notification_toggle(config.notify_config_change)}")
+    return "\n".join(lines)
+
+
+def build_status_config_export_message(payload: StatusConfigExportPayload) -> str:
+    lines = ["ステータス設定エクスポート"]
+    lines.append(f"- 元サーバーID: {payload.source_guild_id}")
+    lines.append(f"- 出力時刻: <t:{payload.exported_at}:f>")
+    lines.append(f"- 段階数: {payload.stage_count}")
+    lines.append("- 含まれる情報: 段階設定のみ")
+    lines.append("- 含まれない情報: ステータス保持者、履歴、通知設定")
+    lines.append("この JSON ファイルをバックアップや移行に使用できます。")
+    return "\n".join(lines)
+
+
+def build_status_config_import_diff_lines(
+    guild: discord.Guild,
+    current: Optional[GuildStatusConfig],
+    imported: GuildStatusConfig,
+) -> list[str]:
+    lines = []
+    current_count = "未設定" if current is None else f"{current.stage_count}段階"
+    lines.append(f"- 段階数: {current_count} -> {imported.stage_count}段階")
+
+    for stage in imported.stages:
+        current_stage = get_stage(current, stage.stage_index) if current is not None else None
+        current_display = stage_display_name(current_stage) if current_stage is not None else "未設定"
+        lines.append(
+            f"- {current_display} -> {stage_display_name(stage)}: "
+            f"ロール {format_role_setting(guild, current_stage.role_id if current_stage is not None else None)} -> "
+            f"{format_role_setting(guild, stage.role_id)} / "
+            f"期間 {format_duration_setting(current_stage.duration_seconds if current_stage is not None else None)} -> "
+            f"{format_duration_setting(stage.duration_seconds)} / "
+            f"満了時 {describe_stage_expire_action(current_stage, current) if current_stage is not None else '未設定'} -> "
+            f"{describe_stage_expire_action(stage, imported)}"
+        )
+    return lines
+
+
+def build_status_config_import_preview_message(
+    guild: discord.Guild,
+    preview: StatusConfigImportPreview,
+) -> str:
+    lines = ["ステータス設定インポートプレビュー"]
+    lines.append(f"- 現在: {'未設定' if preview.current_stage_count is None else f'{preview.current_stage_count}段階'}")
+    lines.append(f"- インポート後: {preview.imported_config.stage_count}段階")
+    if preview.source_guild_id is not None:
+        lines.append(f"- 出力元サーバーID: {preview.source_guild_id}")
+    lines.append(f"- 出力時刻: <t:{preview.exported_at}:f>")
+    lines.extend(build_preview_summary_lines(
+        SetupPreviewSummary(
+            reapply_count=preview.reapply_count,
+            clamp_count=preview.clamp_count,
+            missing_role_count=preview.missing_role_count,
+        )
+    ))
+    if preview.warning_lines:
+        lines.append("- 注意:")
+        lines.extend(preview.warning_lines)
+    lines.append("- 変更予定:")
+    lines.extend(preview.diff_lines)
+    lines.append("この内容でインポートする場合は確認ボタンを押してください。")
+    return "\n".join(lines)
+
+
+def build_status_config_import_result_message(
+    current_stage_count: Optional[int],
+    imported: GuildStatusConfig,
+    refreshed: int,
+    failed: int,
+) -> str:
+    lines = ["ステータス設定をインポートしました。"]
+    lines.append(f"- 段階数: {'未設定' if current_stage_count is None else current_stage_count} -> {imported.stage_count}")
+    lines.append(f"- 既存ステータス保持者への再適用: {refreshed}件中 {failed}件失敗")
     return "\n".join(lines)
 
 
