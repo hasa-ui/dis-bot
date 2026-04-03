@@ -1,18 +1,37 @@
+import json
+from dataclasses import asdict
 from typing import Optional
 
 import discord
 
-from .config import ACTION_CLEAR, ACTION_HOLD, SETUP_GUIDANCE
-from .formatters import describe_record_next_change, stage_display_name
-from .models import GuildStatusConfig, SetupPreviewSummary, StatusHistoryEntry, StatusListEntry, StatusStageConfig
+from .config import ACTION_CLEAR, ACTION_HOLD, MAX_STAGE_COUNT, SETUP_GUIDANCE
+from .formatters import (
+    build_status_config_import_diff_lines,
+    describe_record_next_change,
+    stage_display_name,
+)
+from .models import (
+    GuildStatusConfig,
+    SetupPreviewSummary,
+    StatusConfigExportPayload,
+    StatusConfigExportStage,
+    StatusConfigImportPreview,
+    StatusHistoryEntry,
+    StatusListEntry,
+    StatusStageConfig,
+)
 from .service_common import ServiceContext, resolve_actor_display, resolve_history_stage_name
 from .validation import (
     default_stage_config,
+    config_complete,
     get_stage,
     is_stage_ready,
+    normalize_label,
     now_ts,
     validate_stage_configuration,
 )
+
+STATUS_CONFIG_EXPORT_SCHEMA_VERSION = 1
 
 
 def predict_reconciled_record(
@@ -141,6 +160,197 @@ def _build_stage_preview_config(
             replacement if stage.stage_index == replacement.stage_index else stage
             for stage in config.stages
         ],
+    )
+
+
+def export_status_config(
+    context: ServiceContext,
+    guild: discord.Guild,
+) -> StatusConfigExportPayload:
+    config = context.store.get_status_config(guild.id)
+    if config is None:
+        raise RuntimeError(f"このサーバーのステータス設定が未完了です。\n先に {SETUP_GUIDANCE}")
+    if not config_complete(config):
+        raise RuntimeError(
+            "このサーバーのステータス設定は未完了です。"
+            "\n先に /setup を完了してから export してください。"
+        )
+
+    return StatusConfigExportPayload(
+        schema_version=STATUS_CONFIG_EXPORT_SCHEMA_VERSION,
+        source_guild_id=guild.id,
+        exported_at=now_ts(),
+        stage_count=config.stage_count,
+        stages=[
+            StatusConfigExportStage(
+                stage_index=stage.stage_index,
+                label=stage.label,
+                role_id=stage.role_id,
+                duration_seconds=stage.duration_seconds,
+                on_expire_action=stage.on_expire_action,
+            )
+            for stage in config.stages
+        ],
+    )
+
+
+def serialize_status_config_export_payload(payload: StatusConfigExportPayload) -> str:
+    return json.dumps(asdict(payload), ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def parse_status_config_export_payload(raw_text: str) -> StatusConfigExportPayload:
+    try:
+        data = json.loads(raw_text.lstrip("\ufeff"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("ステータス設定 JSON の解析に失敗しました。") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError("ステータス設定 JSON の形式が正しくありません。")
+
+    schema_version = data.get("schema_version")
+    if schema_version != STATUS_CONFIG_EXPORT_SCHEMA_VERSION:
+        raise ValueError("対応していないステータス設定 JSON です。")
+
+    source_guild_id = data.get("source_guild_id")
+    exported_at = data.get("exported_at")
+    stage_count = data.get("stage_count")
+    stages_data = data.get("stages")
+
+    if not isinstance(source_guild_id, int):
+        raise ValueError("source_guild_id が不正です。")
+    if not isinstance(exported_at, int):
+        raise ValueError("exported_at が不正です。")
+    if not isinstance(stage_count, int):
+        raise ValueError("stage_count が不正です。")
+    if not 1 <= stage_count <= MAX_STAGE_COUNT:
+        raise ValueError(f"stage_count は 1〜{MAX_STAGE_COUNT} の範囲である必要があります。")
+    if not isinstance(stages_data, list):
+        raise ValueError("stages が不正です。")
+    if len(stages_data) != stage_count:
+        raise ValueError("stage_count と stages の件数が一致しません。")
+
+    stages: list[StatusConfigExportStage] = []
+    seen_indices: set[int] = set()
+    for item in stages_data:
+        if not isinstance(item, dict):
+            raise ValueError("stages の各要素が不正です。")
+
+        stage_index = item.get("stage_index")
+        label = item.get("label")
+        role_id = item.get("role_id")
+        duration_seconds = item.get("duration_seconds")
+        on_expire_action = item.get("on_expire_action")
+
+        if not isinstance(stage_index, int):
+            raise ValueError("stage_index が不正です。")
+        if not 1 <= stage_index <= stage_count:
+            raise ValueError("stage_index が範囲外です。")
+        if stage_index in seen_indices:
+            raise ValueError("stage_index が重複しています。")
+        if not isinstance(label, str):
+            raise ValueError("label が不正です。")
+        if role_id is not None and not isinstance(role_id, int):
+            raise ValueError("role_id が不正です。")
+        if not isinstance(duration_seconds, int):
+            raise ValueError("duration_seconds が不正です。")
+        if not isinstance(on_expire_action, str):
+            raise ValueError("on_expire_action が不正です。")
+
+        stages.append(
+            StatusConfigExportStage(
+                stage_index=stage_index,
+                label=normalize_label(label),
+                role_id=role_id,
+                duration_seconds=duration_seconds,
+                on_expire_action=on_expire_action,
+            )
+        )
+        seen_indices.add(stage_index)
+
+    stages.sort(key=lambda stage: stage.stage_index)
+    return StatusConfigExportPayload(
+        schema_version=schema_version,
+        source_guild_id=source_guild_id,
+        exported_at=exported_at,
+        stage_count=stage_count,
+        stages=stages,
+    )
+
+
+def build_status_config_from_export_payload(
+    guild: discord.Guild,
+    payload: StatusConfigExportPayload,
+) -> GuildStatusConfig:
+    if payload.stage_count != len(payload.stages):
+        raise ValueError("stage_count と stages の件数が一致しません。")
+
+    stages = []
+    for item in payload.stages:
+        if item.role_id is None:
+            raise ValueError(f"{item.stage_index} 段階のロールが未設定です。")
+        if guild.get_role(item.role_id) is None:
+            raise ValueError(f"段階{item.stage_index} のロールが見つかりません。")
+        stage = StatusStageConfig(
+            stage_index=item.stage_index,
+            label=item.label,
+            role_id=item.role_id,
+            duration_seconds=item.duration_seconds,
+            on_expire_action=item.on_expire_action,
+        )
+        config = GuildStatusConfig(
+            guild_id=guild.id,
+            stage_count=payload.stage_count,
+            stages=stages + [stage],
+        )
+        validate_stage_configuration(config, stage)
+        stages.append(stage)
+
+    return GuildStatusConfig(
+        guild_id=guild.id,
+        stage_count=payload.stage_count,
+        stages=stages,
+    )
+
+
+def preview_status_config_import(
+    context: ServiceContext,
+    guild: discord.Guild,
+    payload: StatusConfigExportPayload,
+) -> StatusConfigImportPreview:
+    current = context.store.get_status_config(guild.id)
+    imported = build_status_config_from_export_payload(guild, payload)
+
+    clamp_count = 0
+    clamp_stage_index: Optional[int] = None
+    if current is not None and imported.stage_count < current.stage_count:
+        clamp_count = context.store.count_records_above_stage(guild.id, imported.stage_count)
+        clamp_stage_index = imported.stage_count
+
+    missing_role_count = sum(
+        1 for stage in imported.stages if stage.role_id is not None and guild.get_role(stage.role_id) is None
+    )
+    warning_lines = []
+    if current is not None and imported.stage_count < current.stage_count:
+        warning_lines.append(
+            f"- 段階数を {current.stage_count} から {imported.stage_count} に減らすため、"
+            f"{clamp_count}件の既存レコードを段階{imported.stage_count}へ丸めます。"
+        )
+
+    return StatusConfigImportPreview(
+        source_guild_id=payload.source_guild_id,
+        exported_at=payload.exported_at,
+        current_stage_count=current.stage_count if current is not None else None,
+        imported_config=imported,
+        reapply_count=_count_projected_reapply_records(
+            context,
+            guild.id,
+            imported,
+            clamp_stage_index=clamp_stage_index,
+        ),
+        clamp_count=clamp_count,
+        missing_role_count=missing_role_count,
+        diff_lines=build_status_config_import_diff_lines(guild, current, imported),
+        warning_lines=warning_lines,
     )
 
 

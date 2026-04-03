@@ -6,6 +6,9 @@ from status_bot.formatters import (
     build_bulk_operation_message,
     build_stage_count_preview_message,
     build_stage_save_preview_message,
+    build_status_config_export_message,
+    build_status_config_import_preview_message,
+    build_status_config_import_result_message,
     build_status_history_message,
     build_status_list_message,
     build_status_config_message,
@@ -15,6 +18,9 @@ from status_bot.formatters import (
 from status_bot.models import (
     BulkOperationResult,
     GuildStatusConfig,
+    StatusConfigExportPayload,
+    StatusConfigExportStage,
+    StatusConfigImportPreview,
     SetupPreviewSummary,
     StatusHistoryEntry,
     StatusListEntry,
@@ -95,6 +101,78 @@ class FormatterTests(unittest.TestCase):
         self.assertIn("保存後の期間: 3日", message)
         self.assertIn("保存後の満了時: 段階1へ移行", message)
         self.assertIn("再適用対象: 4件", message)
+
+    def test_build_status_config_export_message_contains_metadata(self) -> None:
+        message = build_status_config_export_message(
+            StatusConfigExportPayload(
+                schema_version=1,
+                source_guild_id=1,
+                exported_at=123,
+                stage_count=1,
+                stages=[
+                    StatusConfigExportStage(
+                        stage_index=1,
+                        label="警告",
+                        role_id=11,
+                        duration_seconds=days_to_seconds(1),
+                        on_expire_action=ACTION_CLEAR,
+                    )
+                ],
+            )
+        )
+
+        self.assertIn("ステータス設定エクスポート", message)
+        self.assertIn("元サーバーID: 1", message)
+        self.assertIn("段階設定のみ", message)
+
+    def test_build_status_config_import_preview_message_contains_diff(self) -> None:
+        guild = FakeGuild()
+        imported = GuildStatusConfig(
+            guild_id=1,
+            stage_count=2,
+            stages=[
+                StatusStageConfig(1, "更新", 11, days_to_seconds(2), ACTION_CLEAR),
+                StatusStageConfig(2, "", 22, days_to_seconds(3), ACTION_NEXT),
+            ],
+        )
+        preview = StatusConfigImportPreview(
+            source_guild_id=99,
+            exported_at=123,
+            current_stage_count=1,
+            imported_config=imported,
+            reapply_count=3,
+            clamp_count=1,
+            missing_role_count=0,
+            diff_lines=[
+                "- 段階数: 1段階 -> 2段階",
+                "- 段階1 -> 段階1（更新）: ロール <@&11> -> <@&11> / 期間 1日 -> 2日 / 満了時 解除 -> 解除",
+            ],
+            warning_lines=["- 段階数を 1 から 2 に変更するため、既存レコードを再評価します。"],
+        )
+
+        message = build_status_config_import_preview_message(guild, preview)
+
+        self.assertIn("ステータス設定インポートプレビュー", message)
+        self.assertIn("出力元サーバーID: 99", message)
+        self.assertIn("再適用対象: 3件", message)
+        self.assertIn("変更予定:", message)
+        self.assertIn("段階1 -> 段階1（更新）", message)
+
+    def test_build_status_config_import_result_message_contains_counts(self) -> None:
+        message = build_status_config_import_result_message(
+            2,
+            GuildStatusConfig(
+                guild_id=1,
+                stage_count=1,
+                stages=[StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR)],
+            ),
+            refreshed=4,
+            failed=1,
+        )
+
+        self.assertIn("ステータス設定をインポートしました。", message)
+        self.assertIn("段階数: 2 -> 1", message)
+        self.assertIn("4件中 1件失敗", message)
 
     def test_build_status_list_message_contains_page_and_reason(self) -> None:
         message = build_status_list_message(

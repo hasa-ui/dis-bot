@@ -12,6 +12,11 @@
 - [x] UTF-8 BOM 付き添付でも先頭行を正しく解釈できるようにする
 - [x] ステータス付与は Discord の role edit 成功後にだけ record / 履歴を保存する
 - [x] ステータス解除は Discord の role edit 成功後にだけ record 削除 / 履歴保存を行う
+- [x] `/status_export` / `/status_import` を追加する
+- [x] export/import の JSON 形式、validation、preview、atomic apply を実装する
+- [x] export/import の回帰テストを追加し、構文検証と `unittest` を再実施する
+- [x] export は未完了の stage 設定を出力しないようにする
+- [x] export の未完了設定拒否に対する回帰テストを追加し、構文検証と `unittest` を再実施する
 
 - [x] `/status_list` の一覧取得を非破壊化し、公開のまま自動遷移を強制できないようにする
 - [x] stale role cleanup 時の `manual_clear` 履歴を復元する

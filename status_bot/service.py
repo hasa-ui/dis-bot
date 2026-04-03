@@ -2,13 +2,14 @@ from typing import Optional
 
 import discord
 
-from .models import StatusStageConfig
+from .models import StatusConfigExportPayload, StatusConfigImportPreview, StatusStageConfig
 from .service_actions import (
     bulk_assign_status,
     bulk_clear_status,
     apply_status_role,
     assign_status,
     clear_status,
+    import_status_config,
     handle_member_join,
     process_due_records,
     reconcile_record,
@@ -19,10 +20,13 @@ from .service_actions import (
 from .service_common import ServiceContext, fetch_member_if_needed
 from .service_notifications import send_status_notification
 from .service_queries import (
+    export_status_config,
     list_guild_status_records,
     list_member_status_history,
+    parse_status_config_export_payload,
     preview_stage_count_settings,
     preview_stage_settings,
+    preview_status_config_import,
 )
 from .store import StatusStore
 
@@ -76,6 +80,19 @@ class StatusService:
         stage: StatusStageConfig,
     ):
         return preview_stage_settings(self.context, guild, stage)
+
+    def export_status_config(self, guild: discord.Guild) -> StatusConfigExportPayload:
+        return export_status_config(self.context, guild)
+
+    def parse_status_config_export_payload(self, raw_text: str) -> StatusConfigExportPayload:
+        return parse_status_config_export_payload(raw_text)
+
+    def preview_status_config_import(
+        self,
+        guild: discord.Guild,
+        payload: StatusConfigExportPayload,
+    ) -> StatusConfigImportPreview:
+        return preview_status_config_import(self.context, guild, payload)
 
     async def fetch_member_if_needed(self, guild_id: int, user_id: int) -> Optional[discord.Member]:
         return await fetch_member_if_needed(self.context, guild_id, user_id)
@@ -160,6 +177,14 @@ class StatusService:
         actor: object,
     ) -> None:
         await clear_status(self.context, guild_id, member, actor)
+
+    async def import_status_config(
+        self,
+        guild_id: int,
+        payload: StatusConfigExportPayload,
+        actor: Optional[object] = None,
+    ) -> tuple[int, int]:
+        return await import_status_config(self.context, guild_id, payload, actor)
 
     async def bulk_assign_status(
         self,
