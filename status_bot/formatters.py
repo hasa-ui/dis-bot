@@ -14,6 +14,8 @@ from .validation import (
     now_ts,
 )
 
+STATUS_LIST_MESSAGE_LIMIT = 1900
+
 
 def format_remaining(seconds: int) -> str:
     if seconds <= 0:
@@ -153,8 +155,16 @@ def shorten_reason(reason: str, limit: int = 80) -> str:
     return reason[: limit - 3] + "..."
 
 
-def build_status_list_message(
-    entries: list[StatusListEntry],
+def build_status_list_entry_line(entry: StatusListEntry) -> str:
+    return (
+        f"- {entry.member_display}: {entry.stage_name} / "
+        f"次回変更 {entry.next_change_text} / "
+        f"理由 {shorten_reason(entry.reason) if entry.reason else '（なし）'}"
+    )
+
+
+def _build_status_list_message_from_lines(
+    entry_lines: list[str],
     *,
     page_index: int,
     page_count: int,
@@ -165,13 +175,84 @@ def build_status_list_message(
         f"- ページ: {page_index + 1}/{page_count}",
         f"- 全件数: {total_count}件",
     ]
-    for entry in entries:
-        lines.append(
-            f"- {entry.member_display}: {entry.stage_name} / "
-            f"次回変更 {entry.next_change_text} / "
-            f"理由 {shorten_reason(entry.reason) if entry.reason else '（なし）'}"
-        )
+    lines.extend(entry_lines)
     return "\n".join(lines)
+
+
+def build_status_list_message(
+    entries: list[StatusListEntry],
+    *,
+    page_index: int,
+    page_count: int,
+    total_count: int,
+) -> str:
+    return _build_status_list_message_from_lines(
+        [build_status_list_entry_line(entry) for entry in entries],
+        page_index=page_index,
+        page_count=page_count,
+        total_count=total_count,
+    )
+
+
+def paginate_status_list_messages(
+    entries: list[StatusListEntry],
+    *,
+    max_length: int = STATUS_LIST_MESSAGE_LIMIT,
+) -> list[str]:
+    total_count = len(entries)
+    if total_count == 0:
+        return [
+            _build_status_list_message_from_lines(
+                [],
+                page_index=0,
+                page_count=1,
+                total_count=0,
+            )
+        ]
+
+    max_page_count = total_count
+    max_header_length = len(
+        _build_status_list_message_from_lines(
+            [],
+            page_index=max_page_count - 1,
+            page_count=max_page_count,
+            total_count=total_count,
+        )
+    )
+    if max_header_length >= max_length:
+        raise ValueError("ステータス一覧ヘッダーが長すぎます。")
+
+    pages: list[list[str]] = []
+    current_page_lines: list[str] = []
+    current_length = max_header_length
+
+    for entry in entries:
+        entry_line = build_status_list_entry_line(entry)
+        added_length = len(entry_line) + 1
+
+        if current_page_lines and current_length + added_length > max_length:
+            pages.append(current_page_lines)
+            current_page_lines = []
+            current_length = max_header_length
+
+        if current_length + added_length > max_length:
+            raise ValueError("ステータス一覧の 1 行が長すぎます。")
+
+        current_page_lines.append(entry_line)
+        current_length += added_length
+
+    if current_page_lines:
+        pages.append(current_page_lines)
+
+    return [
+        _build_status_list_message_from_lines(
+            page_lines,
+            page_index=page_index,
+            page_count=len(pages),
+            total_count=total_count,
+        )
+        for page_index, page_lines in enumerate(pages)
+    ]
 
 
 def build_status_count_save_message(stage_count: int, refreshed: int, failed: int) -> str:

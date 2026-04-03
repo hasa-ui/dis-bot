@@ -1,5 +1,8 @@
 # TODO
 
+- [x] `/status_list` を moderator 権限必須へ修正し、理由の露出範囲を制限する
+- [x] `/status_list` のページ分割を固定件数から文字数上限制御へ変更する
+- [x] 上記 2 件の回帰テストと lessons を追加し、構文検証と `unittest` を再実施する
 - [x] `/status_list` の一覧取得 helper と表示用モデルを追加する
 - [x] `/status_list` command とページング View / formatter を追加する
 - [x] `/status_list` の service / formatter / view 回帰テストを追加し、構文検証と `unittest` を実施する
@@ -87,12 +90,16 @@
 - 今回の `/setup` 保存前プレビュー実装では未解決事項は残っていない
 - 今回のレビュー指摘 2 件は修正済みで、追加の未解決事項は残っていない
 - 今回の `/status_list` 実装では未解決事項は残っていない
+- 今回の `/status_list` レビュー修正 2 件でも追加の未解決事項は残っていない
 
 ## Changes
 
 - `ロードマップ.md` を新規追加し、現行機能の現在地を整理したうえで、運用便利化と機能拡張の両輪で短期・中期・長期・検討のみの改善候補をまとめた
 - ロードマップでは現行公開コマンドを `/setup` / `/status_config` / `/status_set` / `/status_clear` / `/status_view` に固定し、将来候補のコマンド案は「未実装の案」として区別して記載した
 - 短期項目には一覧表示、履歴、通知、設定変更プレビューを置き、中期以降には一括操作、export/import、テンプレート、任意遷移、例外ルール、期限調整などを整理した
+- `/status_list` を `Manage Roles` 権限必須に変更し、理由を含む一覧を moderator 向けに限定した
+- `/status_list` のページ分割を固定 10 件から本文長ベースへ変更し、各ページが Discord の 2000 文字上限を超えないよう安全余白付きで分割するようにした
+- `tests/test_commands.py` を追加し、`/status_list` の権限制御を固定した
 - `.codex/tasks/agents_md_update_proposal.md` を追加し、`AGENTS.md` と現行 repo 実態の食い違い、更新対象節、差分要点、置き換え文案をまとめた
 - 更新案では `bot.py` の役割を薄いエントリポイントへ修正し、`status_bot/`、`tests/`、`supervisor.sh`、`setenv.example.sh` を主要ファイルに含める方針を明記した
 - 更新案では旧 `違反` / 固定 3 段前提を、可変段階の `ステータス` モデルと legacy migration 前提に置き換える文案を用意した
@@ -234,5 +241,7 @@
 - 実施: `python -m unittest discover -s tests` -> 16 tests, OK
 - 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
 - 実施: `python -m unittest discover -s tests` -> 21 tests, OK
+- 実施: `python -m py_compile bot.py status_bot/*.py tests/*.py` -> 成功
+- 実施: `python -m unittest discover -s tests` -> 23 tests, OK
 - 未実施: Discord 上での slash command 動作確認
 - 未実施理由: この環境では実サーバー接続とロール変更を伴う E2E 検証ができないため

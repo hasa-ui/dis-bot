@@ -64,20 +64,24 @@ class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_status_list_view_updates_button_state_by_page(self) -> None:
         entries = [
-            StatusListEntry(i, f"<@{i}>", 1, "段階1", "1日後に 解除", "", i)
+            StatusListEntry(i, f"<@{i}>", 1, "段階1（" + ("警告" * 10) + "）", "1日後に 解除", "確認メモ" * 10, i)
             for i in range(3)
         ]
-        view = StatusListView(1, entries, page_size=2)
+        view = StatusListView(1, entries, max_length=220)
 
+        self.assertGreater(view.page_count, 1)
         self.assertTrue(view.previous_page.disabled)
         self.assertFalse(view.next_page.disabled)
-        self.assertIn("ページ: 1/2", view.render_content())
+        self.assertIn(f"ページ: 1/{view.page_count}", view.render_content())
 
         view.page_index = 1
         view._sync_buttons()
         self.assertFalse(view.previous_page.disabled)
-        self.assertTrue(view.next_page.disabled)
-        self.assertIn("ページ: 2/2", view.render_content())
+        if view.page_count == 2:
+            self.assertTrue(view.next_page.disabled)
+        else:
+            self.assertFalse(view.next_page.disabled)
+        self.assertIn(f"ページ: 2/{view.page_count}", view.render_content())
 
     async def test_status_list_view_rejects_other_user(self) -> None:
         entries = [StatusListEntry(1, "<@1>", 1, "段階1", "1日後に 解除", "", 1)]

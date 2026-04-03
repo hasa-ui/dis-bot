@@ -4,13 +4,14 @@ import discord
 
 from .config import ACTION_CLEAR, ACTION_HOLD, ACTION_LABELS, ACTION_NEXT, DEFAULT_STAGE_COUNT, MAX_STAGE_COUNT
 from .formatters import (
+    STATUS_LIST_MESSAGE_LIMIT,
     build_setup_home_message,
     build_stage_count_preview_message,
     build_stage_editor_message,
     build_stage_save_preview_message,
     build_stage_save_message,
-    build_status_list_message,
     build_status_count_save_message,
+    paginate_status_list_messages,
 )
 from .models import GuildStatusConfig, StatusListEntry, StatusStageConfig
 from .permissions import has_manage_guild
@@ -74,35 +75,24 @@ class StatusListView(UserOnlyView):
         owner_id: int,
         entries: list[StatusListEntry],
         *,
-        page_size: int = 10,
         page_index: int = 0,
+        max_length: int = STATUS_LIST_MESSAGE_LIMIT,
     ) -> None:
         super().__init__(owner_id)
-        self.entries = entries
-        self.page_size = page_size
-        self.page_index = page_index
+        self.pages = paginate_status_list_messages(entries, max_length=max_length)
+        self.page_index = min(page_index, len(self.pages) - 1)
         self._sync_buttons()
 
     @property
     def page_count(self) -> int:
-        return max(1, (len(self.entries) + self.page_size - 1) // self.page_size)
-
-    def current_page_entries(self) -> list[StatusListEntry]:
-        start = self.page_index * self.page_size
-        end = start + self.page_size
-        return self.entries[start:end]
+        return len(self.pages)
 
     def _sync_buttons(self) -> None:
         self.previous_page.disabled = self.page_index <= 0
         self.next_page.disabled = self.page_index >= self.page_count - 1
 
     def render_content(self) -> str:
-        return build_status_list_message(
-            self.current_page_entries(),
-            page_index=self.page_index,
-            page_count=self.page_count,
-            total_count=len(self.entries),
-        )
+        return self.pages[self.page_index]
 
     @discord.ui.button(label="前へ", style=discord.ButtonStyle.secondary)
     async def previous_page(
