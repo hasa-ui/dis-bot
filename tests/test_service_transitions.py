@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from status_bot.config import ACTION_CLEAR, ACTION_HOLD, ACTION_NEXT
 from status_bot.models import GuildStatusNotificationConfig, StatusListEntry, StatusStageConfig
@@ -193,10 +193,13 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
 
         guild = FakeGuild(1, (11,), channel_ids=(900,), member_ids=(300,))
         channel = self._configure_notifications(guild, notify_manual_set=True)
-        self.service.apply_status_role = AsyncMock(side_effect=RuntimeError("role edit failed"))
 
-        with self.assertRaises(RuntimeError):
-            await self.service.assign_status(1, SimpleNamespace(id=300), 1, "reason", SimpleNamespace(id=77))
+        with patch(
+            "status_bot.service_actions.apply_status_role",
+            new=AsyncMock(side_effect=RuntimeError("role edit failed")),
+        ):
+            with self.assertRaises(RuntimeError):
+                await self.service.assign_status(1, SimpleNamespace(id=300), 1, "reason", SimpleNamespace(id=77))
 
         self.assertEqual(channel.messages, [])
 
@@ -241,10 +244,13 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
 
         guild = FakeGuild(1, (11, 22), channel_ids=(900,), member_ids=(301,))
         channel = self._configure_notifications(guild, notify_manual_clear=True)
-        self.service.apply_status_role = AsyncMock(side_effect=RuntimeError("role edit failed"))
 
-        with self.assertRaises(RuntimeError):
-            await self.service.clear_status(1, FakeMember(301), "tester")
+        with patch(
+            "status_bot.service_actions.apply_status_role",
+            new=AsyncMock(side_effect=RuntimeError("role edit failed")),
+        ):
+            with self.assertRaises(RuntimeError):
+                await self.service.clear_status(1, FakeMember(301), "tester")
 
         self.assertEqual(channel.messages, [])
 
@@ -292,9 +298,12 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
 
         guild = FakeGuild(1, (11, 22), channel_ids=(900,), member_ids=(302,))
         channel = self._configure_notifications(guild, notify_auto_transition=True)
-        self.service.apply_status_role = AsyncMock(side_effect=RuntimeError("role edit failed"))
 
-        await self.service.reconcile_record(self.store.get_status_record(1, 302))
+        with patch(
+            "status_bot.service_actions.apply_status_role",
+            new=AsyncMock(side_effect=RuntimeError("role edit failed")),
+        ):
+            await self.service.reconcile_record(self.store.get_status_record(1, 302))
 
         self.assertEqual(channel.messages, [])
 
@@ -339,9 +348,12 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
 
         guild = FakeGuild(1, (11,), channel_ids=(900,), member_ids=(303,))
         channel = self._configure_notifications(guild, notify_auto_transition=True)
-        self.service.apply_status_role = AsyncMock(side_effect=RuntimeError("role edit failed"))
 
-        await self.service.reconcile_record(self.store.get_status_record(1, 303))
+        with patch(
+            "status_bot.service_actions.apply_status_role",
+            new=AsyncMock(side_effect=RuntimeError("role edit failed")),
+        ):
+            await self.service.reconcile_record(self.store.get_status_record(1, 303))
 
         self.assertEqual(channel.messages, [])
 
