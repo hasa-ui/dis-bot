@@ -11,6 +11,7 @@ from .config import (
     HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
     HISTORY_EVENT_CONFIG_STAGE_SAVED,
     HISTORY_EVENT_CONFIG_IMPORTED,
+    HISTORY_EVENT_CONFIG_TEMPLATE_APPLIED,
     HISTORY_EVENT_MANUAL_CLEAR,
     HISTORY_EVENT_MANUAL_SET,
     SETUP_GUIDANCE,
@@ -26,7 +27,7 @@ from .service_common import (
     resolve_history_stage_name,
 )
 from .service_notifications import send_status_notification
-from .service_queries import preview_status_config_import
+from .service_queries import preview_status_config_import, preview_status_template_apply
 from .models import StatusConfigExportPayload
 from .validation import (
     configured_role_ids,
@@ -468,6 +469,63 @@ async def import_status_config(
         context,
         guild_id,
         event_type=HISTORY_EVENT_CONFIG_IMPORTED,
+        actor=actor,
+        detail=detail,
+        refreshed=refreshed,
+        failed=failed,
+    )
+    return refreshed, failed
+
+
+async def apply_status_template(
+    context: ServiceContext,
+    guild_id: int,
+    template_key: str,
+    actor: Optional[object] = None,
+) -> tuple[int, int]:
+    guild = context.bot.get_guild(guild_id)
+    if guild is None:
+        raise RuntimeError(f"Guild {guild_id} not found")
+
+    current = context.store.get_status_config(guild_id)
+    previous_role_ids = configured_role_ids(current)
+    preview = preview_status_template_apply(context, guild, template_key)
+    projected = preview.projected_config
+
+    previous_count = current.stage_count if current is not None else None
+    detail = (
+        f"テンプレートを適用 ({preview.template_name}, "
+        f"{'未設定' if previous_count is None else previous_count} から {projected.stage_count} へ変更)"
+    )
+    with context.store.db:
+        if current is not None and projected.stage_count < current.stage_count:
+            target_stage = get_stage(projected, projected.stage_count)
+            target_expires_at = None
+            if target_stage is not None and target_stage.duration_seconds > 0:
+                target_expires_at = now_ts() + target_stage.duration_seconds
+            context.store.clamp_records_to_stage(guild_id, projected.stage_count, target_expires_at)
+
+        context.store.replace_status_config(guild_id, projected.stage_count, projected.stages)
+        record_history(
+            context,
+            guild_id,
+            user_id=None,
+            actor=actor,
+            event_type=HISTORY_EVENT_CONFIG_TEMPLATE_APPLIED,
+            from_stage_index=None,
+            to_stage_index=None,
+            detail=detail,
+        )
+    refreshed, failed = await refresh_guild_status_roles(
+        context,
+        guild_id,
+        remove_role_ids=previous_role_ids,
+        actor=actor,
+    )
+    await send_status_notification(
+        context,
+        guild_id,
+        event_type=HISTORY_EVENT_CONFIG_TEMPLATE_APPLIED,
         actor=actor,
         detail=detail,
         refreshed=refreshed,

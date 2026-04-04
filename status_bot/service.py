@@ -2,8 +2,14 @@ from typing import Optional
 
 import discord
 
-from .models import StatusConfigExportPayload, StatusConfigImportPreview, StatusStageConfig
+from .models import (
+    StatusConfigExportPayload,
+    StatusConfigImportPreview,
+    StatusStageConfig,
+    StatusTemplateApplyPreview,
+)
 from .service_actions import (
+    apply_status_template,
     bulk_assign_status,
     bulk_clear_status,
     apply_status_role,
@@ -27,6 +33,7 @@ from .service_queries import (
     preview_stage_count_settings,
     preview_stage_settings,
     preview_status_config_import,
+    preview_status_template_apply,
 )
 from .store import StatusStore
 
@@ -93,6 +100,13 @@ class StatusService:
         payload: StatusConfigExportPayload,
     ) -> StatusConfigImportPreview:
         return preview_status_config_import(self.context, guild, payload)
+
+    def preview_status_template_apply(
+        self,
+        guild: discord.Guild,
+        template_key: str,
+    ) -> StatusTemplateApplyPreview:
+        return preview_status_template_apply(self.context, guild, template_key)
 
     async def fetch_member_if_needed(self, guild_id: int, user_id: int) -> Optional[discord.Member]:
         return await fetch_member_if_needed(self.context, guild_id, user_id)
@@ -185,6 +199,14 @@ class StatusService:
         actor: Optional[object] = None,
     ) -> tuple[int, int]:
         return await import_status_config(self.context, guild_id, payload, actor)
+
+    async def apply_status_template(
+        self,
+        guild_id: int,
+        template_key: str,
+        actor: Optional[object] = None,
+    ) -> tuple[int, int]:
+        return await apply_status_template(self.context, guild_id, template_key, actor)
 
     async def bulk_assign_status(
         self,

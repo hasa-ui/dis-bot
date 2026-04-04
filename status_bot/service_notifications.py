@@ -9,6 +9,7 @@ from .config import (
     HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
     HISTORY_EVENT_CONFIG_STAGE_SAVED,
     HISTORY_EVENT_CONFIG_IMPORTED,
+    HISTORY_EVENT_CONFIG_TEMPLATE_APPLIED,
     HISTORY_EVENT_MANUAL_CLEAR,
     HISTORY_EVENT_MANUAL_SET,
     logger,
@@ -42,6 +43,7 @@ def notification_enabled(
         HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
         HISTORY_EVENT_CONFIG_STAGE_SAVED,
         HISTORY_EVENT_CONFIG_IMPORTED,
+        HISTORY_EVENT_CONFIG_TEMPLATE_APPLIED,
     }:
         return config.notify_config_change
     return False
@@ -149,6 +151,7 @@ async def send_status_notification(
         HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED,
         HISTORY_EVENT_CONFIG_STAGE_SAVED,
         HISTORY_EVENT_CONFIG_IMPORTED,
+        HISTORY_EVENT_CONFIG_TEMPLATE_APPLIED,
     }:
         content = build_config_change_notification(
             detail,

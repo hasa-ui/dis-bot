@@ -4,10 +4,21 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from status_bot.models import StatusHistoryEntry, StatusListEntry, StatusStageConfig
+from status_bot.models import (
+    StatusHistoryEntry,
+    StatusListEntry,
+    StatusStageConfig,
+    StatusTemplateApplyPreview,
+    GuildStatusConfig,
+)
 from status_bot.store import StatusStore
 from status_bot.validation import days_to_seconds
-from status_bot.views import StageSetupView, StatusHistoryView, StatusListView
+from status_bot.views import (
+    StageSetupView,
+    StatusHistoryView,
+    StatusListView,
+    StatusTemplateApplyPreviewView,
+)
 
 
 class FakeGuild:
@@ -25,6 +36,7 @@ class FakeBot:
     def __init__(self, store: StatusStore, guild: FakeGuild) -> None:
         self.store = store
         self._guild = guild
+        self.service = SimpleNamespace()
 
     def get_guild(self, guild_id: int):
         if guild_id == self._guild.id:
@@ -121,6 +133,35 @@ class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
         else:
             self.assertFalse(view.next_page.disabled)
         self.assertIn(f"ページ: 2/{view.page_count}", view.render_content())
+
+    async def test_status_template_apply_preview_view_renders_template_name(self) -> None:
+        view = StatusTemplateApplyPreviewView(
+            self.bot,
+            1,
+            self.guild,
+            "standard_3",
+            StatusTemplateApplyPreview(
+                template_key="standard_3",
+                template_name="3段標準",
+                current_stage_count=2,
+                projected_config=GuildStatusConfig(
+                    guild_id=1,
+                    stage_count=3,
+                    stages=[
+                        StatusStageConfig(1, "", None, days_to_seconds(7), "clear"),
+                        StatusStageConfig(2, "", None, days_to_seconds(14), "next"),
+                        StatusStageConfig(3, "", None, days_to_seconds(30), "next"),
+                    ],
+                ),
+                reapply_count=0,
+                clamp_count=0,
+                missing_role_count=0,
+                diff_lines=["- 段階数: 2段階 -> 3段階"],
+                warning_lines=[],
+            ),
+        )
+
+        self.assertIn("ステータステンプレート適用プレビュー (3段標準)", view.render_content())
 
 
 if __name__ == "__main__":

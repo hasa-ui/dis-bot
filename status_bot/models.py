@@ -61,6 +61,19 @@ class StatusConfigImportPreview:
 
 
 @dataclass(frozen=True)
+class StatusTemplateApplyPreview:
+    template_key: str
+    template_name: str
+    current_stage_count: Optional[int]
+    projected_config: GuildStatusConfig
+    reapply_count: int
+    clamp_count: int
+    missing_role_count: int
+    diff_lines: list[str]
+    warning_lines: list[str]
+
+
+@dataclass(frozen=True)
 class SetupPreviewSummary:
     reapply_count: int
     clamp_count: int

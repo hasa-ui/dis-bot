@@ -18,8 +18,15 @@ from .formatters import (
 from .models import BulkOperationResult, GuildStatusNotificationConfig
 from .permissions import can_manage_target, has_manage_guild, has_manage_roles
 from .service_queries import serialize_status_config_export_payload
+from .service_queries import get_status_template_choices
 from .validation import default_stage_name, get_stage, stage_path_is_ready
-from .views import SetupHomeView, StatusConfigImportPreviewView, StatusHistoryView, StatusListView
+from .views import (
+    SetupHomeView,
+    StatusConfigImportPreviewView,
+    StatusHistoryView,
+    StatusListView,
+    StatusTemplateApplyPreviewView,
+)
 
 if TYPE_CHECKING:
     from .app import StatusBot
@@ -315,6 +322,45 @@ def register_commands(bot: "StatusBot") -> None:
             interaction.user.id,
             interaction.guild,
             payload,
+            preview,
+        )
+        await interaction.edit_original_response(content=new_view.render_content(), view=new_view)
+        new_view.message = await interaction.original_response()
+
+    @bot.tree.command(name="status_template_apply", description="固定テンプレートからステータス設定を適用します")
+    @app_commands.describe(template="適用するテンプレート")
+    @app_commands.choices(
+        template=[
+            app_commands.Choice(name=template_name, value=template_key)
+            for template_name, template_key in get_status_template_choices()
+        ]
+    )
+    async def status_template_apply(
+        interaction: discord.Interaction,
+        template: str,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+        if not has_manage_guild(interaction):
+            await interaction.response.send_message(
+                "Manage Server 権限か管理者権限が必要です。",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            preview = bot.service.preview_status_template_apply(interaction.guild, template)
+        except ValueError as e:
+            await interaction.edit_original_response(content=str(e), view=None)
+            return
+
+        new_view = StatusTemplateApplyPreviewView(
+            bot,
+            interaction.user.id,
+            interaction.guild,
+            template,
             preview,
         )
         await interaction.edit_original_response(content=new_view.render_content(), view=new_view)

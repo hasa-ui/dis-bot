@@ -9,6 +9,8 @@ from status_bot.formatters import (
     build_status_config_export_message,
     build_status_config_import_preview_message,
     build_status_config_import_result_message,
+    build_status_template_apply_preview_message,
+    build_status_template_apply_result_message,
     build_status_history_message,
     build_status_list_message,
     build_status_config_message,
@@ -21,6 +23,7 @@ from status_bot.models import (
     StatusConfigExportPayload,
     StatusConfigExportStage,
     StatusConfigImportPreview,
+    StatusTemplateApplyPreview,
     SetupPreviewSummary,
     StatusHistoryEntry,
     StatusListEntry,
@@ -172,6 +175,61 @@ class FormatterTests(unittest.TestCase):
 
         self.assertIn("ステータス設定をインポートしました。", message)
         self.assertIn("段階数: 2 -> 1", message)
+        self.assertIn("4件中 1件失敗", message)
+
+    def test_build_status_template_apply_preview_message_contains_diff(self) -> None:
+        guild = FakeGuild()
+        preview = StatusTemplateApplyPreview(
+            template_key="standard_3",
+            template_name="3段標準",
+            current_stage_count=2,
+            projected_config=GuildStatusConfig(
+                guild_id=1,
+                stage_count=3,
+                stages=[
+                    StatusStageConfig(1, "", 11, days_to_seconds(7), ACTION_CLEAR),
+                    StatusStageConfig(2, "警告", 22, days_to_seconds(14), ACTION_NEXT),
+                    StatusStageConfig(3, "", None, days_to_seconds(30), ACTION_NEXT),
+                ],
+            ),
+            reapply_count=2,
+            clamp_count=0,
+            missing_role_count=0,
+            diff_lines=[
+                "- 段階数: 2段階 -> 3段階",
+                "- 未設定 -> 段階3: ロール 未設定 -> 未設定 / 期間 未設定 -> 30日 / 満了時 未設定 -> 段階2（警告）へ移行",
+            ],
+            warning_lines=[],
+        )
+
+        message = build_status_template_apply_preview_message(guild, preview)
+
+        self.assertIn("ステータステンプレート適用プレビュー (3段標準)", message)
+        self.assertIn("適用後: 3段階", message)
+        self.assertIn("再適用対象: 2件", message)
+        self.assertIn("変更予定:", message)
+        self.assertIn("未設定 -> 段階3", message)
+
+    def test_build_status_template_apply_result_message_contains_counts(self) -> None:
+        message = build_status_template_apply_result_message(
+            "4段警告強化型",
+            3,
+            GuildStatusConfig(
+                guild_id=1,
+                stage_count=4,
+                stages=[
+                    StatusStageConfig(1, "", 11, days_to_seconds(7), ACTION_CLEAR),
+                    StatusStageConfig(2, "", 22, days_to_seconds(14), ACTION_NEXT),
+                    StatusStageConfig(3, "", None, days_to_seconds(30), ACTION_NEXT),
+                    StatusStageConfig(4, "", None, days_to_seconds(60), ACTION_NEXT),
+                ],
+            ),
+            refreshed=4,
+            failed=1,
+        )
+
+        self.assertIn("ステータステンプレートを適用しました。 (4段警告強化型)", message)
+        self.assertIn("段階数: 3 -> 4", message)
         self.assertIn("4件中 1件失敗", message)
 
     def test_build_status_list_message_contains_page_and_reason(self) -> None:

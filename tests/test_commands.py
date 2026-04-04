@@ -12,6 +12,7 @@ from status_bot.models import (
     StatusConfigExportPayload,
     StatusConfigExportStage,
     StatusConfigImportPreview,
+    StatusTemplateApplyPreview,
     StatusHistoryEntry,
     StatusStageConfig,
 )
@@ -372,6 +373,45 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(interaction.response.deferred)
         self.assertEqual(len(interaction.edits), 1)
         self.assertIn("ステータス設定インポートプレビュー", interaction.edits[0][0])
+        self.assertIsNotNone(interaction.edits[0][1])
+
+    async def test_status_template_apply_renders_preview(self) -> None:
+        guild = FakeGuild(1, role_ids=(11, 22))
+        bot = FakeBot(guild)
+        preview = StatusTemplateApplyPreview(
+            template_key="standard_3",
+            template_name="3段標準",
+            current_stage_count=2,
+            projected_config=GuildStatusConfig(
+                guild_id=1,
+                stage_count=3,
+                stages=[
+                    StatusStageConfig(1, "", 11, 7 * 86400, ACTION_HOLD),
+                    StatusStageConfig(2, "警告", 22, 14 * 86400, "next"),
+                    StatusStageConfig(3, "", None, 30 * 86400, "next"),
+                ],
+            ),
+            reapply_count=1,
+            clamp_count=0,
+            missing_role_count=0,
+            diff_lines=["- 段階数: 2段階 -> 3段階"],
+            warning_lines=[],
+        )
+        bot.service.preview_status_template_apply = Mock(return_value=preview)
+        register_commands(bot)
+        command = bot.tree.commands["status_template_apply"]
+
+        interaction = FakeInteraction(
+            guild=guild,
+            user=SimpleNamespace(id=10),
+        )
+
+        with patch("status_bot.commands.has_manage_guild", return_value=True):
+            await command(interaction, "standard_3")
+
+        self.assertTrue(interaction.response.deferred)
+        self.assertEqual(len(interaction.edits), 1)
+        self.assertIn("ステータステンプレート適用プレビュー", interaction.edits[0][0])
         self.assertIsNotNone(interaction.edits[0][1])
 
     async def test_status_bulk_set_parses_attachment_and_skips_invalid_targets(self) -> None:

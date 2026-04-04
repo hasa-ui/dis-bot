@@ -1,5 +1,18 @@
 # TODO
 
+- [x] `/status_template_apply` の固定テンプレート定義と preview/apply 方針を実装する
+- [x] テンプレート適用の command / view / formatter / service 回帰テストを追加する
+- [x] `python -m py_compile bot.py status_bot/*.py tests/*.py` を実施して結果を記録する
+- [x] `python -m unittest discover -s tests` を実施して結果を記録する
+
+- 実施内容:
+  - `/status_template_apply` を追加し、`3段標準` / `4段警告強化型` の preview と confirm apply を実装した
+  - テンプレート適用 preview で段階数差分、各段階の期間・満了時動作、再適用対象件数、丸め対象件数を表示するようにした
+  - 既存段階の `role_id` / label は維持し、新規段階は role 未設定で作成する挙動を service に追加した
+- 検証結果:
+  - `python -m py_compile bot.py status_bot/*.py tests/*.py` : 成功
+  - `python -m unittest discover -s tests` : 82 tests, OK
+
 - [x] `タスクリスト.md` の対象範囲を中期ロードマップへ更新する
 - [x] 短期ロードマップを完了済みタスクとして整理する
 - [x] 中期ロードマップ 5.1 から 5.4 を実装単位のチェックリストへ分解する

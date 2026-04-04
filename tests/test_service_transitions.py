@@ -789,6 +789,81 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(summary.reapply_count, 1)
 
+    async def test_preview_status_template_apply_preserves_existing_roles(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "注意", 11, days_to_seconds(3), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "警告", 22, days_to_seconds(5), ACTION_HOLD))
+        self.store.upsert_status_record(1, 20, 2, now_ts() + 60, "active")
+        self.store.commit()
+
+        preview = self.service.preview_status_template_apply(FakeGuild(1, (11, 22)), "strict_4")
+
+        self.assertEqual(preview.template_name, "4段警告強化型")
+        self.assertEqual(preview.current_stage_count, 2)
+        self.assertEqual(preview.projected_config.stage_count, 4)
+        self.assertEqual(preview.projected_config.stages[0].role_id, 11)
+        self.assertEqual(preview.projected_config.stages[1].role_id, 22)
+        self.assertIsNone(preview.projected_config.stages[2].role_id)
+        self.assertEqual(preview.projected_config.stages[1].duration_seconds, days_to_seconds(14))
+        self.assertEqual(preview.reapply_count, 1)
+        self.assertEqual(preview.clamp_count, 0)
+
+    async def test_preview_status_template_apply_reports_clamp_count(self) -> None:
+        self.store.set_stage_count_value(1, 4)
+        self.store.ensure_stage_rows(1, 4)
+        for idx, role_id in ((1, 11), (2, 22), (3, 33), (4, 44)):
+            action = ACTION_CLEAR if idx == 1 else ACTION_NEXT
+            self.store.upsert_status_stage(1, StatusStageConfig(idx, "", role_id, days_to_seconds(idx), action))
+        self.store.upsert_status_record(1, 10, 4, now_ts() + 60, "active")
+        self.store.commit()
+
+        preview = self.service.preview_status_template_apply(FakeGuild(1, (11, 22, 33, 44)), "standard_3")
+
+        self.assertEqual(preview.projected_config.stage_count, 3)
+        self.assertEqual(preview.clamp_count, 1)
+        self.assertTrue(preview.warning_lines)
+
+    async def test_apply_status_template_replaces_settings_and_sends_notification(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "注意", 11, days_to_seconds(3), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "警告", 22, days_to_seconds(5), ACTION_HOLD))
+        self.store.upsert_status_record(1, 200, 2, now_ts() + 60, "active")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22), channel_ids=(900,), member_ids=(77, 200))
+        channel = self._configure_notifications(guild, notify_config_change=True)
+
+        refreshed, failed = await self.service.apply_status_template(1, "strict_4", SimpleNamespace(id=77))
+
+        self.assertEqual((refreshed, failed), (1, 0))
+        config = self.store.get_status_config(1)
+        self.assertIsNotNone(config)
+        assert config is not None
+        self.assertEqual(config.stage_count, 4)
+        self.assertEqual(config.stages[0].role_id, 11)
+        self.assertEqual(config.stages[1].role_id, 22)
+        self.assertIsNone(config.stages[2].role_id)
+        self.assertIsNone(config.stages[3].role_id)
+        event = self.store.db.execute(
+            """
+            SELECT event_type, actor_user_id, detail
+            FROM status_history_records
+            WHERE guild_id = ? AND event_type = 'config_template_applied'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (1,),
+        ).fetchone()
+        self.assertIsNotNone(event)
+        self.assertEqual(event["actor_user_id"], 77)
+        self.assertIn("4段警告強化型", event["detail"])
+        self.assertEqual(len(channel.messages), 1)
+        self.assertIn("設定変更", channel.messages[0])
+        self.assertIn("テンプレートを適用", channel.messages[0])
+        self.assertIn("<@77>", channel.messages[0])
+
     async def test_list_guild_status_records_sorts_expiring_before_hold(self) -> None:
         self.store.set_stage_count_value(1, 3)
         self.store.ensure_stage_rows(1, 3)
