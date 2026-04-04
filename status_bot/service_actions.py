@@ -384,16 +384,26 @@ async def save_stage_settings(
     previous_role_ids = configured_role_ids(config)
     previous_stage = get_stage(config, stage.stage_index)
     context.store.upsert_status_stage(guild_id, stage)
-    if stage.on_expire_action != ACTION_HOLD:
-        target_expires_at = now_ts() + stage.duration_seconds
+    updated_config = context.store.get_status_config(guild_id)
+    if updated_config is not None:
+        current_ts = now_ts()
         for row in context.store.get_active_records_by_guild(guild_id):
-            if row["stage_index"] != stage.stage_index or row["expires_at"] is not None:
+            if row["expires_at"] is not None:
                 continue
+
+            current_stage = get_stage(updated_config, row["stage_index"])
+            if (
+                current_stage is None
+                or current_stage.on_expire_action == ACTION_HOLD
+                or not stage_path_is_ready(updated_config, row["stage_index"])
+            ):
+                continue
+
             context.store.upsert_status_record(
                 guild_id,
                 row["user_id"],
-                stage.stage_index,
-                target_expires_at,
+                row["stage_index"],
+                current_ts + current_stage.duration_seconds,
                 row["reason"],
             )
     detail = (

@@ -11,9 +11,10 @@
   - 既存段階の `role_id` / label は維持し、新規段階は role 未設定で作成する挙動を service に追加した
   - reviewer 指摘に対応し、`hold` 由来で `expires_at=NULL` の active record がテンプレート適用後に timed stage へ入る場合は、新しい期限を再計算するように修正した
   - reviewer 指摘に対応し、テンプレート適用時に未設定 stage へ丸められて `expires_at=NULL` のまま残った record は、後から `/setup` でその stage が保存された時点で期限を backfill するように修正した
+  - reviewer 指摘に対応し、`save_stage_settings()` の期限 backfill は saved stage 単体ではなく `stage_path_is_ready()` が通る record 全体に限定し、下位段階が未設定の間は countdown を始めないように修正した
 - 検証結果:
   - `python -m py_compile bot.py status_bot/*.py tests/*.py` : 成功
-  - `python -m unittest discover -s tests` : 86 tests, OK
+  - `python -m unittest discover -s tests` : 87 tests, OK
 
 - [x] `タスクリスト.md` の対象範囲を中期ロードマップへ更新する
 - [x] 短期ロードマップを完了済みタスクとして整理する
