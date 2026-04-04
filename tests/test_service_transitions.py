@@ -914,6 +914,30 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         expected = now_ts() + days_to_seconds(30)
         self.assertLessEqual(abs(row["expires_at"] - expected), 2)
 
+    async def test_apply_status_template_does_not_retime_held_record_when_target_stage_is_unconfigured(self) -> None:
+        self.store.set_stage_count_value(1, 4)
+        self.store.ensure_stage_rows(1, 4)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(3), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(5), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(3, "", None, days_to_seconds(7), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(4, "重警告", 44, days_to_seconds(9), ACTION_HOLD))
+        self.store.upsert_status_record(1, 200, 4, None, "held")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22, 44), member_ids=(77, 200))
+        self.service = StatusService(FakeBot(guild), self.store)
+
+        with patch(
+            "status_bot.service_actions.refresh_guild_status_roles",
+            new=AsyncMock(return_value=(1, 0)),
+        ):
+            await self.service.apply_status_template(1, "standard_3", SimpleNamespace(id=77))
+
+        row = self.store.get_status_record(1, 200)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["stage_index"], 3)
+        self.assertIsNone(row["expires_at"])
+
     async def test_list_guild_status_records_sorts_expiring_before_hold(self) -> None:
         self.store.set_stage_count_value(1, 3)
         self.store.ensure_stage_rows(1, 3)

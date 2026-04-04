@@ -509,7 +509,7 @@ async def apply_status_template(
                 projected_stage_index = projected.stage_count
 
             target_stage = get_stage(projected, projected_stage_index)
-            if target_stage is None or target_stage.on_expire_action == ACTION_HOLD:
+            if not is_stage_ready(target_stage) or target_stage.on_expire_action == ACTION_HOLD:
                 continue
 
             context.store.upsert_status_record(
