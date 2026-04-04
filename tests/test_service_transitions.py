@@ -643,6 +643,32 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("0件中 0件失敗", channel.messages[0])
         self.assertIn("<@77>", channel.messages[0])
 
+    async def test_save_stage_settings_backfills_expiry_for_null_stage_records(self) -> None:
+        self.store.set_stage_count_value(1, 3)
+        self.store.ensure_stage_rows(1, 3)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(3, "", None, days_to_seconds(30), ACTION_NEXT))
+        self.store.upsert_status_record(1, 200, 3, None, "held-unconfigured")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22, 33), member_ids=(77, 200))
+        self.service = StatusService(FakeBot(guild), self.store)
+
+        refreshed, failed = await self.service.save_stage_settings(
+            1,
+            StatusStageConfig(3, "", 33, days_to_seconds(30), ACTION_NEXT),
+            SimpleNamespace(id=77),
+        )
+
+        self.assertEqual((refreshed, failed), (1, 0))
+        row = self.store.get_status_record(1, 200)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["stage_index"], 3)
+        self.assertIsNotNone(row["expires_at"])
+        expected = now_ts() + days_to_seconds(30)
+        self.assertLessEqual(abs(row["expires_at"] - expected), 2)
+
     async def test_import_status_config_replaces_settings_and_clamps_records(self) -> None:
         self.store.set_stage_count_value(1, 2)
         self.store.ensure_stage_rows(1, 2)

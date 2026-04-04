@@ -10,9 +10,10 @@
   - テンプレート適用 preview で段階数差分、各段階の期間・満了時動作、再適用対象件数、丸め対象件数を表示するようにした
   - 既存段階の `role_id` / label は維持し、新規段階は role 未設定で作成する挙動を service に追加した
   - reviewer 指摘に対応し、`hold` 由来で `expires_at=NULL` の active record がテンプレート適用後に timed stage へ入る場合は、新しい期限を再計算するように修正した
+  - reviewer 指摘に対応し、テンプレート適用時に未設定 stage へ丸められて `expires_at=NULL` のまま残った record は、後から `/setup` でその stage が保存された時点で期限を backfill するように修正した
 - 検証結果:
   - `python -m py_compile bot.py status_bot/*.py tests/*.py` : 成功
-  - `python -m unittest discover -s tests` : 84 tests, OK
+  - `python -m unittest discover -s tests` : 86 tests, OK
 
 - [x] `タスクリスト.md` の対象範囲を中期ロードマップへ更新する
 - [x] 短期ロードマップを完了済みタスクとして整理する
