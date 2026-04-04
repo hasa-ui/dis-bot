@@ -497,12 +497,34 @@ async def apply_status_template(
         f"テンプレートを適用 ({preview.template_name}, "
         f"{'未設定' if previous_count is None else previous_count} から {projected.stage_count} へ変更)"
     )
+
+    current_ts = now_ts()
     with context.store.db:
+        for row in context.store.get_active_records_by_guild(guild_id):
+            if row["expires_at"] is not None:
+                continue
+
+            projected_stage_index = row["stage_index"]
+            if current is not None and projected_stage_index > projected.stage_count:
+                projected_stage_index = projected.stage_count
+
+            target_stage = get_stage(projected, projected_stage_index)
+            if target_stage is None or target_stage.on_expire_action == ACTION_HOLD:
+                continue
+
+            context.store.upsert_status_record(
+                guild_id,
+                row["user_id"],
+                projected_stage_index,
+                current_ts + target_stage.duration_seconds,
+                row["reason"],
+            )
+
         if current is not None and projected.stage_count < current.stage_count:
             target_stage = get_stage(projected, projected.stage_count)
             target_expires_at = None
             if target_stage is not None and target_stage.duration_seconds > 0:
-                target_expires_at = now_ts() + target_stage.duration_seconds
+                target_expires_at = current_ts + target_stage.duration_seconds
             context.store.clamp_records_to_stage(guild_id, projected.stage_count, target_expires_at)
 
         context.store.replace_status_config(guild_id, projected.stage_count, projected.stages)

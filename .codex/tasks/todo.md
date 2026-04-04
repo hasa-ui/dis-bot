@@ -9,9 +9,10 @@
   - `/status_template_apply` を追加し、`3段標準` / `4段警告強化型` の preview と confirm apply を実装した
   - テンプレート適用 preview で段階数差分、各段階の期間・満了時動作、再適用対象件数、丸め対象件数を表示するようにした
   - 既存段階の `role_id` / label は維持し、新規段階は role 未設定で作成する挙動を service に追加した
+  - reviewer 指摘に対応し、`hold` 由来で `expires_at=NULL` の active record がテンプレート適用後に timed stage へ入る場合は、新しい期限を再計算するように修正した
 - 検証結果:
   - `python -m py_compile bot.py status_bot/*.py tests/*.py` : 成功
-  - `python -m unittest discover -s tests` : 82 tests, OK
+  - `python -m unittest discover -s tests` : 84 tests, OK
 
 - [x] `タスクリスト.md` の対象範囲を中期ロードマップへ更新する
 - [x] 短期ロードマップを完了済みタスクとして整理する
