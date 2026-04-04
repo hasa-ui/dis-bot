@@ -23,6 +23,9 @@
 - destructive な `git reset --hard` を守る safety check は、同じシェルで直列に実行する。親シェルで検査してから別 subshell で reset すると checkout 競合の race を作る
 - ただし current-mode の reset failure は watchdog 全体の fatal にしない。`set -e` 下ではログを書いて成功ステータスで戻し、その回の再起動だけを見送る
 - 可変段階モデルで上位 record を下位段階へ丸めるときは、`stage_index` だけでなく `expires_at` も新段階の duration に合わせて再計算する
+- `hold` 済み record の `expires_at=NULL` は、設定変更で timed stage (`next` / `clear`) へ移る場合に必ず再計算する。NULL のまま role 再適用だけ行うと、その後の自動遷移が止まる
+- ただしその再計算は `is_stage_ready(target_stage)` を満たす段階に限定する。未設定 role の段階で countdown だけ始めると、実適用前に期間が進んでしまう
+- 未設定 stage のために `expires_at=NULL` のまま残した record は、後から `save_stage_settings()` で期限を backfill する。ただし saved stage 単体ではなく、その record の現在段階から `stage_path_is_ready()` が通る時点まで待つ
 - 段階付与の readiness 判定は「下位段階が全部埋まっているか」ではなく、その段階の `next` / `clear` / `hold` から実際に到達する経路だけを見る
 - setup 画面の draft は、保存先の段階が still exists する場合にだけ復元する。段階数変更で対象段階が消えたときは、別段階へ流用せず現在の保存済み設定へ戻す
 - preview 用の件数表示は raw record 数ではなく、実保存時と同じ reconcile 後の結果に合わせる。期限切れで `clear` される record を件数に含めない

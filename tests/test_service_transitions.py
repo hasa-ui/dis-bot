@@ -643,6 +643,67 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("0件中 0件失敗", channel.messages[0])
         self.assertIn("<@77>", channel.messages[0])
 
+    async def test_save_stage_settings_backfills_expiry_for_null_stage_records(self) -> None:
+        self.store.set_stage_count_value(1, 3)
+        self.store.ensure_stage_rows(1, 3)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(3, "", None, days_to_seconds(30), ACTION_NEXT))
+        self.store.upsert_status_record(1, 200, 3, None, "held-unconfigured")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22, 33), member_ids=(77, 200))
+        self.service = StatusService(FakeBot(guild), self.store)
+
+        refreshed, failed = await self.service.save_stage_settings(
+            1,
+            StatusStageConfig(3, "", 33, days_to_seconds(30), ACTION_NEXT),
+            SimpleNamespace(id=77),
+        )
+
+        self.assertEqual((refreshed, failed), (1, 0))
+        row = self.store.get_status_record(1, 200)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["stage_index"], 3)
+        self.assertIsNotNone(row["expires_at"])
+        expected = now_ts() + days_to_seconds(30)
+        self.assertLessEqual(abs(row["expires_at"] - expected), 2)
+
+    async def test_save_stage_settings_waits_until_full_path_is_ready_before_backfill(self) -> None:
+        self.store.set_stage_count_value(1, 3)
+        self.store.ensure_stage_rows(1, 3)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(1), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", None, days_to_seconds(2), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(3, "", None, days_to_seconds(30), ACTION_NEXT))
+        self.store.upsert_status_record(1, 200, 3, None, "held-unconfigured")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22, 33), member_ids=(77, 200))
+        self.service = StatusService(FakeBot(guild), self.store)
+
+        await self.service.save_stage_settings(
+            1,
+            StatusStageConfig(3, "", 33, days_to_seconds(30), ACTION_NEXT),
+            SimpleNamespace(id=77),
+        )
+        row = self.store.get_status_record(1, 200)
+        self.assertIsNotNone(row)
+        self.assertIsNone(row["expires_at"])
+
+        refreshed, failed = await self.service.save_stage_settings(
+            1,
+            StatusStageConfig(2, "", 22, days_to_seconds(2), ACTION_NEXT),
+            SimpleNamespace(id=77),
+        )
+
+        self.assertEqual((refreshed, failed), (1, 0))
+        row = self.store.get_status_record(1, 200)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["stage_index"], 3)
+        self.assertIsNotNone(row["expires_at"])
+        expected = now_ts() + days_to_seconds(30)
+        self.assertLessEqual(abs(row["expires_at"] - expected), 2)
+
     async def test_import_status_config_replaces_settings_and_clamps_records(self) -> None:
         self.store.set_stage_count_value(1, 2)
         self.store.ensure_stage_rows(1, 2)
@@ -788,6 +849,155 @@ class ServiceTransitionTests(unittest.IsolatedAsyncioTestCase):
             StatusStageConfig(2, "更新", 22, days_to_seconds(3), ACTION_NEXT),
         )
         self.assertEqual(summary.reapply_count, 1)
+
+    async def test_preview_status_template_apply_preserves_existing_roles(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "注意", 11, days_to_seconds(3), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "警告", 22, days_to_seconds(5), ACTION_HOLD))
+        self.store.upsert_status_record(1, 20, 2, now_ts() + 60, "active")
+        self.store.commit()
+
+        preview = self.service.preview_status_template_apply(FakeGuild(1, (11, 22)), "strict_4")
+
+        self.assertEqual(preview.template_name, "4段警告強化型")
+        self.assertEqual(preview.current_stage_count, 2)
+        self.assertEqual(preview.projected_config.stage_count, 4)
+        self.assertEqual(preview.projected_config.stages[0].role_id, 11)
+        self.assertEqual(preview.projected_config.stages[1].role_id, 22)
+        self.assertIsNone(preview.projected_config.stages[2].role_id)
+        self.assertEqual(preview.projected_config.stages[1].duration_seconds, days_to_seconds(14))
+        self.assertEqual(preview.reapply_count, 1)
+        self.assertEqual(preview.clamp_count, 0)
+
+    async def test_preview_status_template_apply_reports_clamp_count(self) -> None:
+        self.store.set_stage_count_value(1, 4)
+        self.store.ensure_stage_rows(1, 4)
+        for idx, role_id in ((1, 11), (2, 22), (3, 33), (4, 44)):
+            action = ACTION_CLEAR if idx == 1 else ACTION_NEXT
+            self.store.upsert_status_stage(1, StatusStageConfig(idx, "", role_id, days_to_seconds(idx), action))
+        self.store.upsert_status_record(1, 10, 4, now_ts() + 60, "active")
+        self.store.commit()
+
+        preview = self.service.preview_status_template_apply(FakeGuild(1, (11, 22, 33, 44)), "standard_3")
+
+        self.assertEqual(preview.projected_config.stage_count, 3)
+        self.assertEqual(preview.clamp_count, 1)
+        self.assertTrue(preview.warning_lines)
+
+    async def test_apply_status_template_replaces_settings_and_sends_notification(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "注意", 11, days_to_seconds(3), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "警告", 22, days_to_seconds(5), ACTION_HOLD))
+        self.store.upsert_status_record(1, 200, 2, now_ts() + 60, "active")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22), channel_ids=(900,), member_ids=(77, 200))
+        channel = self._configure_notifications(guild, notify_config_change=True)
+
+        refreshed, failed = await self.service.apply_status_template(1, "strict_4", SimpleNamespace(id=77))
+
+        self.assertEqual((refreshed, failed), (1, 0))
+        config = self.store.get_status_config(1)
+        self.assertIsNotNone(config)
+        assert config is not None
+        self.assertEqual(config.stage_count, 4)
+        self.assertEqual(config.stages[0].role_id, 11)
+        self.assertEqual(config.stages[1].role_id, 22)
+        self.assertIsNone(config.stages[2].role_id)
+        self.assertIsNone(config.stages[3].role_id)
+        event = self.store.db.execute(
+            """
+            SELECT event_type, actor_user_id, detail
+            FROM status_history_records
+            WHERE guild_id = ? AND event_type = 'config_template_applied'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (1,),
+        ).fetchone()
+        self.assertIsNotNone(event)
+        self.assertEqual(event["actor_user_id"], 77)
+        self.assertIn("4段警告強化型", event["detail"])
+        self.assertEqual(len(channel.messages), 1)
+        self.assertIn("設定変更", channel.messages[0])
+        self.assertIn("テンプレートを適用", channel.messages[0])
+        self.assertIn("<@77>", channel.messages[0])
+
+    async def test_apply_status_template_retimes_held_record_when_stage_becomes_timed(self) -> None:
+        self.store.set_stage_count_value(1, 2)
+        self.store.ensure_stage_rows(1, 2)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(3), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "警告", 22, days_to_seconds(5), ACTION_HOLD))
+        self.store.upsert_status_record(1, 200, 2, None, "held")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22), member_ids=(77, 200))
+        self.service = StatusService(FakeBot(guild), self.store)
+
+        with patch(
+            "status_bot.service_actions.refresh_guild_status_roles",
+            new=AsyncMock(return_value=(1, 0)),
+        ):
+            await self.service.apply_status_template(1, "strict_4", SimpleNamespace(id=77))
+
+        row = self.store.get_status_record(1, 200)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["stage_index"], 2)
+        self.assertIsNotNone(row["expires_at"])
+        expected = now_ts() + days_to_seconds(14)
+        self.assertLessEqual(abs(row["expires_at"] - expected), 2)
+
+    async def test_apply_status_template_retimes_clamped_held_record_when_target_stage_is_timed(self) -> None:
+        self.store.set_stage_count_value(1, 4)
+        self.store.ensure_stage_rows(1, 4)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(3), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(5), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(3, "", 33, days_to_seconds(7), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(4, "重警告", 44, days_to_seconds(9), ACTION_HOLD))
+        self.store.upsert_status_record(1, 200, 4, None, "held")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22, 33, 44), member_ids=(77, 200))
+        self.service = StatusService(FakeBot(guild), self.store)
+
+        with patch(
+            "status_bot.service_actions.refresh_guild_status_roles",
+            new=AsyncMock(return_value=(1, 0)),
+        ):
+            await self.service.apply_status_template(1, "standard_3", SimpleNamespace(id=77))
+
+        row = self.store.get_status_record(1, 200)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["stage_index"], 3)
+        self.assertIsNotNone(row["expires_at"])
+        expected = now_ts() + days_to_seconds(30)
+        self.assertLessEqual(abs(row["expires_at"] - expected), 2)
+
+    async def test_apply_status_template_does_not_retime_held_record_when_target_stage_is_unconfigured(self) -> None:
+        self.store.set_stage_count_value(1, 4)
+        self.store.ensure_stage_rows(1, 4)
+        self.store.upsert_status_stage(1, StatusStageConfig(1, "", 11, days_to_seconds(3), ACTION_CLEAR))
+        self.store.upsert_status_stage(1, StatusStageConfig(2, "", 22, days_to_seconds(5), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(3, "", None, days_to_seconds(7), ACTION_NEXT))
+        self.store.upsert_status_stage(1, StatusStageConfig(4, "重警告", 44, days_to_seconds(9), ACTION_HOLD))
+        self.store.upsert_status_record(1, 200, 4, None, "held")
+        self.store.commit()
+
+        guild = FakeGuild(1, (11, 22, 44), member_ids=(77, 200))
+        self.service = StatusService(FakeBot(guild), self.store)
+
+        with patch(
+            "status_bot.service_actions.refresh_guild_status_roles",
+            new=AsyncMock(return_value=(1, 0)),
+        ):
+            await self.service.apply_status_template(1, "standard_3", SimpleNamespace(id=77))
+
+        row = self.store.get_status_record(1, 200)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["stage_index"], 3)
+        self.assertIsNone(row["expires_at"])
 
     async def test_list_guild_status_records_sorts_expiring_before_hold(self) -> None:
         self.store.set_stage_count_value(1, 3)

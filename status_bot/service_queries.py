@@ -4,9 +4,9 @@ from typing import Optional
 
 import discord
 
-from .config import ACTION_CLEAR, ACTION_HOLD, MAX_STAGE_COUNT, SETUP_GUIDANCE
+from .config import ACTION_CLEAR, ACTION_HOLD, ACTION_NEXT, MAX_STAGE_COUNT, SETUP_GUIDANCE
 from .formatters import (
-    build_status_config_import_diff_lines,
+    build_status_config_diff_lines,
     describe_record_next_change,
     stage_display_name,
 )
@@ -16,6 +16,7 @@ from .models import (
     StatusConfigExportPayload,
     StatusConfigExportStage,
     StatusConfigImportPreview,
+    StatusTemplateApplyPreview,
     StatusHistoryEntry,
     StatusListEntry,
     StatusStageConfig,
@@ -32,6 +33,67 @@ from .validation import (
 )
 
 STATUS_CONFIG_EXPORT_SCHEMA_VERSION = 1
+STATUS_TEMPLATE_STANDARD_3 = "standard_3"
+STATUS_TEMPLATE_STRICT_4 = "strict_4"
+STATUS_TEMPLATES = {
+    STATUS_TEMPLATE_STANDARD_3: {
+        "name": "3段標準",
+        "stages": (
+            (1, 7, ACTION_CLEAR),
+            (2, 14, ACTION_NEXT),
+            (3, 30, ACTION_NEXT),
+        ),
+    },
+    STATUS_TEMPLATE_STRICT_4: {
+        "name": "4段警告強化型",
+        "stages": (
+            (1, 7, ACTION_CLEAR),
+            (2, 14, ACTION_NEXT),
+            (3, 30, ACTION_NEXT),
+            (4, 60, ACTION_NEXT),
+        ),
+    },
+}
+
+
+def get_status_template_choices() -> list[tuple[str, str]]:
+    return [(template["name"], key) for key, template in STATUS_TEMPLATES.items()]
+
+
+def get_status_template_name(template_key: str) -> str:
+    template = STATUS_TEMPLATES.get(template_key)
+    if template is None:
+        raise ValueError("未対応のテンプレートです。")
+    return str(template["name"])
+
+
+def build_status_config_from_template(
+    guild_id: int,
+    current: Optional[GuildStatusConfig],
+    template_key: str,
+) -> tuple[str, GuildStatusConfig]:
+    template = STATUS_TEMPLATES.get(template_key)
+    if template is None:
+        raise ValueError("未対応のテンプレートです。")
+
+    stages = []
+    for stage_index, duration_days, action in template["stages"]:
+        current_stage = get_stage(current, stage_index) if current is not None else None
+        stages.append(
+            StatusStageConfig(
+                stage_index=stage_index,
+                label=current_stage.label if current_stage is not None else "",
+                role_id=current_stage.role_id if current_stage is not None else None,
+                duration_seconds=duration_days * 86400,
+                on_expire_action=action,
+            )
+        )
+
+    return str(template["name"]), GuildStatusConfig(
+        guild_id=guild_id,
+        stage_count=len(stages),
+        stages=stages,
+    )
 
 
 def predict_reconciled_record(
@@ -349,7 +411,46 @@ def preview_status_config_import(
         ),
         clamp_count=clamp_count,
         missing_role_count=missing_role_count,
-        diff_lines=build_status_config_import_diff_lines(guild, current, imported),
+        diff_lines=build_status_config_diff_lines(guild, current, imported),
+        warning_lines=warning_lines,
+    )
+
+
+def preview_status_template_apply(
+    context: ServiceContext,
+    guild: discord.Guild,
+    template_key: str,
+) -> StatusTemplateApplyPreview:
+    current = context.store.get_status_config(guild.id)
+    template_name, projected = build_status_config_from_template(guild.id, current, template_key)
+
+    clamp_count = 0
+    clamp_stage_index: Optional[int] = None
+    if current is not None and projected.stage_count < current.stage_count:
+        clamp_count = context.store.count_records_above_stage(guild.id, projected.stage_count)
+        clamp_stage_index = projected.stage_count
+
+    warning_lines = []
+    if current is not None and projected.stage_count < current.stage_count:
+        warning_lines.append(
+            f"- 段階数を {current.stage_count} から {projected.stage_count} に減らすため、"
+            f"{clamp_count}件の既存レコードを段階{projected.stage_count}へ丸めます。"
+        )
+
+    return StatusTemplateApplyPreview(
+        template_key=template_key,
+        template_name=template_name,
+        current_stage_count=current.stage_count if current is not None else None,
+        projected_config=projected,
+        reapply_count=_count_projected_reapply_records(
+            context,
+            guild.id,
+            projected,
+            clamp_stage_index=clamp_stage_index,
+        ),
+        clamp_count=clamp_count,
+        missing_role_count=_count_missing_roles(guild, projected),
+        diff_lines=build_status_config_diff_lines(guild, current, projected),
         warning_lines=warning_lines,
     )
 

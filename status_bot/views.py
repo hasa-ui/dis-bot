@@ -13,6 +13,8 @@ from .formatters import (
     build_stage_save_message,
     build_status_config_import_preview_message,
     build_status_config_import_result_message,
+    build_status_template_apply_preview_message,
+    build_status_template_apply_result_message,
     build_status_count_save_message,
     paginate_status_history_messages,
     paginate_status_list_messages,
@@ -21,6 +23,7 @@ from .models import (
     GuildStatusConfig,
     StatusConfigExportPayload,
     StatusConfigImportPreview,
+    StatusTemplateApplyPreview,
     StatusHistoryEntry,
     StatusListEntry,
     StatusStageConfig,
@@ -826,6 +829,102 @@ class StatusConfigImportPreviewView(OwnerOnlyView):
             content=build_status_config_import_result_message(
                 self.preview.current_stage_count,
                 self.preview.imported_config,
+                refreshed,
+                failed,
+            ),
+            view=new_view,
+        )
+        new_view.message = self.message
+
+
+class StatusTemplateApplyPreviewView(OwnerOnlyView):
+    def __init__(
+        self,
+        bot: "StatusBot",
+        owner_id: int,
+        guild: discord.Guild,
+        template_key: str,
+        preview: StatusTemplateApplyPreview,
+    ) -> None:
+        super().__init__(bot, owner_id)
+        self.guild_id = guild.id
+        self.template_key = template_key
+        self.preview = preview
+
+    def render_content(self) -> str:
+        guild = self.bot.get_guild(self.guild_id)
+        if guild is None:
+            return "サーバー情報が見つかりません。"
+        return build_status_template_apply_preview_message(guild, self.preview)
+
+    @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.secondary)
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        new_view = SetupHomeView(self.bot, self.owner_id)
+        await interaction.response.edit_message(
+            content=build_setup_home_message(guild, self.bot.store.get_status_config(guild.id)),
+            view=new_view,
+        )
+        await new_view.bind_message(interaction)
+
+    @discord.ui.button(label="この内容で適用", style=discord.ButtonStyle.success)
+    async def confirm_apply(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("サーバー内で使ってください。", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        try:
+            self.bot.service.preview_status_template_apply(guild, self.template_key)
+            refreshed, failed = await self.bot.service.apply_status_template(
+                guild.id,
+                self.template_key,
+                interaction.user,
+            )
+        except ValueError as e:
+            new_view = SetupHomeView(self.bot, self.owner_id)
+            await interaction.edit_original_response(
+                content=build_setup_home_message(
+                    guild,
+                    self.bot.store.get_status_config(guild.id),
+                    notice=str(e),
+                ),
+                view=new_view,
+            )
+            new_view.message = self.message
+            return
+        except RuntimeError as e:
+            new_view = SetupHomeView(self.bot, self.owner_id)
+            await interaction.edit_original_response(
+                content=build_setup_home_message(
+                    guild,
+                    self.bot.store.get_status_config(guild.id),
+                    notice=str(e),
+                ),
+                view=new_view,
+            )
+            new_view.message = self.message
+            return
+
+        new_view = SetupHomeView(self.bot, self.owner_id)
+        await interaction.edit_original_response(
+            content=build_status_template_apply_result_message(
+                self.preview.template_name,
+                self.preview.current_stage_count,
+                self.preview.projected_config,
                 refreshed,
                 failed,
             ),

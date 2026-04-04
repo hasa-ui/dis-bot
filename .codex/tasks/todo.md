@@ -1,5 +1,21 @@
 # TODO
 
+- [x] `/status_template_apply` の固定テンプレート定義と preview/apply 方針を実装する
+- [x] テンプレート適用の command / view / formatter / service 回帰テストを追加する
+- [x] `python -m py_compile bot.py status_bot/*.py tests/*.py` を実施して結果を記録する
+- [x] `python -m unittest discover -s tests` を実施して結果を記録する
+
+- 実施内容:
+  - `/status_template_apply` を追加し、`3段標準` / `4段警告強化型` の preview と confirm apply を実装した
+  - テンプレート適用 preview で段階数差分、各段階の期間・満了時動作、再適用対象件数、丸め対象件数を表示するようにした
+  - 既存段階の `role_id` / label は維持し、新規段階は role 未設定で作成する挙動を service に追加した
+  - reviewer 指摘に対応し、`hold` 由来で `expires_at=NULL` の active record がテンプレート適用後に timed stage へ入る場合は、新しい期限を再計算するように修正した
+  - reviewer 指摘に対応し、テンプレート適用時に未設定 stage へ丸められて `expires_at=NULL` のまま残った record は、後から `/setup` でその stage が保存された時点で期限を backfill するように修正した
+  - reviewer 指摘に対応し、`save_stage_settings()` の期限 backfill は saved stage 単体ではなく `stage_path_is_ready()` が通る record 全体に限定し、下位段階が未設定の間は countdown を始めないように修正した
+- 検証結果:
+  - `python -m py_compile bot.py status_bot/*.py tests/*.py` : 成功
+  - `python -m unittest discover -s tests` : 87 tests, OK
+
 - [x] `タスクリスト.md` の対象範囲を中期ロードマップへ更新する
 - [x] 短期ロードマップを完了済みタスクとして整理する
 - [x] 中期ロードマップ 5.1 から 5.4 を実装単位のチェックリストへ分解する

@@ -33,6 +33,7 @@ HISTORY_EVENT_AUTO_CLEAR = "auto_clear"
 HISTORY_EVENT_CONFIG_STAGE_COUNT_SAVED = "config_stage_count_saved"
 HISTORY_EVENT_CONFIG_STAGE_SAVED = "config_stage_saved"
 HISTORY_EVENT_CONFIG_IMPORTED = "config_imported"
+HISTORY_EVENT_CONFIG_TEMPLATE_APPLIED = "config_template_applied"
 
 LEGACY_LEVEL_TO_STAGE = {
     "light": 1,
